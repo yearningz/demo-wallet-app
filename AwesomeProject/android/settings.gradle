@@ -1,0 +1,34 @@
+pluginManagement {
+  includeBuild("../node_modules/@react-native/gradle-plugin")
+  repositories {
+    // Prefer mirrors first to avoid SSL issues to dl.google.com
+    maven { url "https://repo.huaweicloud.com/repository/maven" }
+    maven { url "https://maven.aliyun.com/repository/google" }
+    mavenCentral()
+    gradlePluginPortal()
+    // google() disabled to avoid dl.google.com SSL issues; using mirrors above
+  }
+}
+plugins { id("com.facebook.react.settings") }
+extensions.configure(com.facebook.react.ReactSettingsExtension){ ex -> ex.autolinkLibrariesFromCommand() }
+rootProject.name = 'AwesomeProject'
+include ':app'
+includeBuild('../node_modules/@react-native/gradle-plugin')
+
+// Ensure repositories for dependency resolution (CameraX/MLKit from Google Maven)
+dependencyResolutionManagement {
+  repositoriesMode.set(RepositoriesMode.PREFER_SETTINGS)
+  repositories {
+    // Prefer mirrors first to avoid SSL issues to dl.google.com
+    maven { url "https://repo.huaweicloud.com/repository/maven" }
+    maven { url "https://maven.aliyun.com/repository/google" }
+    maven { url "https://maven.aliyun.com/repository/public" }
+    maven { url "https://jitpack.io" }
+    maven { url "https://repo.huaweicloud.com/repository/maven" }
+    mavenCentral()
+    // google() disabled to avoid dl.google.com SSL issues; using mirrors above
+  }
+
+  // Gradle 8.13 supports exclusiveContent under repositories with syntax below
+  // but some environments have issues; remove forRepository to keep compatibility.
+}
