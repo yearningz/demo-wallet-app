@@ -12,6 +12,7 @@ const statusMap: Record<string, string> = {
 
 const OrderListScreen = ({ navigation, route }: OrderListScreenProps) => {
   const userId = route?.params?.userId ?? '03572638';
+  const tokenSymbol = route?.params?.tokenSymbol ?? '';
   const [list, setList] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
@@ -21,7 +22,7 @@ const OrderListScreen = ({ navigation, route }: OrderListScreenProps) => {
       try {
         setLoading(true);
         setError('');
-        const res = await fetch('http://172.20.10.6:8088/api/v1/posTransaction/queryOrderList?reqType=app', {
+        const res = await fetch('http://172.20.10.6:8088/api/v1/posTransaction/queryOrderList?reqType=app&primaryAccountNumber=625807******4153&tokenSymbol=' + tokenSymbol, {
           method: 'GET',
           headers: { 'Content-Type': 'application/json' },
         });

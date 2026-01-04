@@ -86,20 +86,27 @@ const CardManageScreen = () => {
             })()}
             <View style={styles.cardCenter}>
               <Text style={styles.cardName}>{(item as any).name} [{maskToken((item as any).token)}]</Text>
-              {(item as any).type === 'stable' &&<Text style={styles.addr}>地址 {maskAddress((item as any).address)}</Text>}
+              {(item as any).type === 'stable' && <Text style={styles.addr}>地址 {maskAddress((item as any).address)}</Text>}
               {(item as any).type === 'stable' && Array.isArray((item as any).coins) && (item as any).coins.length > 0 && (
                 <View style={styles.stableRow}>
                   {(((item as any).coins ?? []) as { symbol: string; balance: string }[]).map((c: { symbol: string; balance: string }, idx: number) => (
-                    <View key={`${c.symbol}-${idx}`} style={styles.stableChip}><Text style={styles.stableChipText}>{`${c.symbol}: ${c.balance}`}</Text></View>
+                    <View key={`${c.symbol}-${idx}`} style={styles.stableChip}><Text style={styles.stableChipText}>{`${c.symbol}: ${c.balance}`}</Text>
+                      <TouchableOpacity style={styles.transferBtn} onPress={() => {
+                        navigation.navigate('OrderList', { userId: '03572638', tokenSymbol:c.symbol });
+                      }}>
+                        <Text style={styles.transferText}>详情</Text>
+                      </TouchableOpacity></View>
+
                   ))}
                 </View>
+
               )}
             </View>
-            <TouchableOpacity style={styles.transferBtn} onPress={() => {
-              navigation.navigate('OrderList', { userId: '03572638' });
+            {/* <TouchableOpacity style={styles.transferBtn} onPress={() => {
+              navigation.navigate('OrderList', { userId: '03572638',tokenSymbol:'' });
             }}>
               <Text style={styles.transferText}>详情</Text>
-            </TouchableOpacity>
+            </TouchableOpacity> */}
           </View>
         )} 
       />

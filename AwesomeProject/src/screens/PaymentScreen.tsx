@@ -10,6 +10,8 @@ import {
 } from 'react-native';
 
 import { PaymentScreenProps } from '../navigation/types';
+import { Keyboard } from 'react-native';
+
 
 const maskToken = (s: string) => {
   if (!s) return '****';
@@ -27,6 +29,7 @@ const PaymentScreen = ({ navigation, route }: PaymentScreenProps) => {
   const [successVisible, setSuccessVisible] = useState(false);
   const [selectedCardId, setSelectedCardId] = useState<string>('');
   const [selectingCard, setSelectingCard] = useState(false);
+  const [selectingTokenSymbol, setSelectingTokenSymbol] = useState('');
   const [cards, setCards] = useState<any[]>([]);
   const [cardsLoading, setCardsLoading] = useState(false);
   const [cardsError, setCardsError] = useState('');
@@ -43,11 +46,15 @@ const PaymentScreen = ({ navigation, route }: PaymentScreenProps) => {
   const [factor, setFactor] = useState<any | null>(null);
   const [factorLoading, setFactorLoading] = useState(false);
   const [factorError, setFactorError] = useState('');
+  const [showPasswordScreen, setShowPasswordScreen] = useState(false);
   const tokenSymbol = route?.params?.tokenSymbol;
   const network = route?.params?.network;
   const to = (route?.params as any)?.to as string | undefined;
   const memo = (route?.params as any)?.memo as string | undefined;
   const scanText = (route?.params as any)?.scanText as string | undefined;
+  const [payPassword, setPayPassword] = useState('');
+// 支付状态：idle | paying | success | timeout
+ const [payStatus, setPayStatus] = useState<'idle' | 'loading' | 'success' | 'timeout'>('idle');
 
   const address = to ?? '';
   const maskAddress = (addr: string) => {
@@ -103,9 +110,13 @@ const PaymentScreen = ({ navigation, route }: PaymentScreenProps) => {
           name: c?.cardType === 'S' ? '稳定币账户' : (c?.issuingInstitution || '银行卡'),
           pan: String(c?.primaryAccountNumber || ''),
           type: c?.cardType === 'S' ? 'stable' : 'bank',
+          balances: c?.balanceInfos || [], 
         }));
         setCards(mapped);
-        if (!selectedCardId && mapped.length > 0) setSelectedCardId(mapped[0].id);
+        if (!selectedCardId && mapped.length > 0) {
+          setSelectedCardId(mapped[0].id);
+          setSelectingTokenSymbol(mapped[0].balances?.[0]?.tokenSymbol || '');
+}
       } catch (e: any) {
         setCardsError(String(e?.message || e));
       } finally {
@@ -128,7 +139,7 @@ const PaymentScreen = ({ navigation, route }: PaymentScreenProps) => {
       }));
       const amt = obj.transactionAmount != null ? Number(obj.transactionAmount) : 0;
       setProductPrice(amt ? String(amt) : '');
-      const total = amt + Number(gasFee || 0);
+      const total = (amt + Number(gasFee || 0)).toFixed(4);
       setTotalPay(total ? String(total) : '');
     }
   }, [scanText, gasFee]);
@@ -137,25 +148,27 @@ const PaymentScreen = ({ navigation, route }: PaymentScreenProps) => {
     try {
       setFactorLoading(true);
       setFactorError('');
-      const res = await fetch('http://172.20.10.6:8088/api/v1/posTransaction/queryTransFactor?primaryAccountNumber=6258071001604153', {
+      const res = await fetch('http://172.20.10.6:8088/api/v1/posTransaction/queryTransFactor?primaryAccountNumber=625807******4153', {
         method: 'GET',
         headers: { 'Content-Type': 'application/json' },
       });
       const json = await res.json();
-      const data = json?.data ?? {};
-      setFactor(data);
-      setGasFee(data?.gasCost != null ? String(data.gasCost) : '');
-      const stables: string[] = Array.isArray(data?.tokenSymbols) ? data.tokenSymbols : [];
-      setStableOptions(stables);
-      if (stables.length > 0) {
-        setSelectedStable(stables[0]);
-      } else {
+      const list: any[] = Array.isArray(json?.data) ? json.data : [];
+      if (list.length === 0) {
+        // 防御：接口正常但无数据
+        setFactor(null);
+        setStableOptions([]);
         setSelectedStable('');
+        return;
       }
-      const amt = Number(data?.transactionAmount ?? 0);
-      setProductPrice(amt ? String(amt) : '');
-      const total = amt + Number(data?.gasCost ?? 0);
-      setTotalPay(total ? String(total) : '');
+      const first = list[0];
+      setFactor((prev: any) => ({
+        ...(prev || {}),
+        ...first,
+      }));
+      // setGasFee(data?.gasCost != null ? String(data.gasCost) : '');
+      setProductPrice(prev => prev); // 交易金额仍来自 scanText
+      setTotalPay(prev => prev);
     } catch (e: any) {
       setFactorError(String(e?.message || e));
     } finally {
@@ -163,13 +176,43 @@ const PaymentScreen = ({ navigation, route }: PaymentScreenProps) => {
     }
   }, [scanText]);
 
+  const fetchGasCost = useCallback(async () => {
+  try {
+    setGasFee('计算中…');
+    const res = await fetch(
+      'http://172.20.10.6:8088/api/v1/posTransaction/queryGasCost',
+      {
+        method: 'GET',
+        headers: { 'Content-Type': 'application/json' },
+      }
+    );
+    const json = await res.json();
+
+    const gas = json?.data != null ? Number(json.data) : 0;
+    setGasFee(String(gas));
+    const amt = Number(factor?.transactionAmount ?? productPrice ?? 0);
+    const total = amt + gas;
+    setTotalPay(String(total));
+
+  } catch (e) {
+    console.warn('fetchGasCost error', e);
+    setGasFee('');
+  }
+}, []);
+
+useEffect(() => {
+  if (showPasswordScreen) {
+    fetchGasCost();
+  }
+}, [showPasswordScreen, fetchGasCost]);
+
   useEffect(() => {
     fetchTransFactor();
   }, [fetchTransFactor]);
 
   return (
     <View style={styles.overlay}>
-      {!successVisible && !selectingCard && (
+      {!showPasswordScreen && !successVisible && !selectingCard && (
       <View style={styles.sheet}>
         <View style={styles.handle} />
 
@@ -185,30 +228,31 @@ const PaymentScreen = ({ navigation, route }: PaymentScreenProps) => {
         {factorLoading && <Text style={styles.sectionDesc}>正在获取交易要素…</Text>}
         {!!factorError && <Text style={styles.sectionDesc}>错误：{factorError}</Text>}
 
-        <View style={styles.amountBlock}>
+        {/* <View style={styles.amountBlock}>
           <Text style={styles.currency}>$</Text>
                <Text style={styles.amount}>{factor?.transactionAmount != null ? `${String(factor?.transactionAmount)}`  : ''}</Text>
-        </View>
+        </View> */}
 
         <View style={{ alignSelf: 'stretch', marginTop: 8 }}>
           <View style={styles.sectionRow}><Text style={styles.sectionTitle}>商户号</Text><Text style={styles.sectionValue}>{factor?.merchantId ?? '-'}</Text></View>
           <View style={styles.sectionRow}><Text style={styles.sectionTitle}>终端号</Text><Text style={styles.sectionValue}>{factor?.terminalId ?? '-'}</Text></View>
-          <View style={styles.sectionRow}><Text style={styles.sectionTitle}>交易金额</Text><Text style={styles.sectionValue}>{factor?.transactionAmount != null ? `$${String(factor?.transactionAmount)}` : '-'}</Text></View>
+          {/* <View style={styles.sectionRow}><Text style={styles.sectionTitle}>交易金额</Text><Text style={styles.sectionValue}>{factor?.transactionAmount != null ? `$${String(factor?.transactionAmount)}` : '-'}</Text></View> */}
           <View style={styles.sectionRow}><Text style={styles.sectionTitle}>订单号</Text><Text style={styles.sectionValue}>{factor?.referenceNumber ?? '-'}</Text></View>
-          {!!factor?.transactionType && (<View style={styles.sectionRow}><Text style={styles.sectionTitle}>交易类型</Text><Text style={styles.sectionValue}>{factor?.transactionType}</Text></View>)}
+          <View style={styles.sectionRow}><Text style={styles.sectionTitle}>商品价格</Text><Text style={styles.sectionValue}>{productPrice ? `$${productPrice}` : ''}</Text></View>
+          {/* {!!factor?.transactionType && (<View style={styles.sectionRow}><Text style={styles.sectionTitle}>交易类型</Text><Text style={styles.sectionValue}>{factor?.transactionType}</Text></View>)} */}
         </View>
 
         {/* 账户安全地址 */}
-        <View style={styles.sectionRow}>
+        {/* <View style={styles.sectionRow}>
           <Text style={styles.sectionTitle}>链上账户地址</Text>
           <View style={styles.addrRight}>
             <Text style={styles.sectionValue}>{maskAddress(factor?.blockchainAddress ?? '')}</Text>
             <View style={styles.safeBadge}><Text style={styles.safeText}>✓</Text></View>
           </View>
-        </View>
+        </View> */}
 
         {/* 稳定币选择 */}
-        <Pressable style={styles.sectionRow} onPress={() => setStableOpen((v) => !v)}>
+        {/* <Pressable style={styles.sectionRow} onPress={() => setStableOpen((v) => !v)}>
           <Text style={styles.sectionTitle}>稳定币</Text>
           <Text style={styles.sectionValue}>{selectedStable} ▾</Text>
         </Pressable>
@@ -220,10 +264,10 @@ const PaymentScreen = ({ navigation, route }: PaymentScreenProps) => {
               </TouchableOpacity>
             ))}
           </View>
-        )}
+        )} */}
 
         {/* 商品价格与费用 */}
-        <View style={styles.sectionRow}>
+        {/* <View style={styles.sectionRow}>
           <Text style={styles.sectionTitle}>商品价格</Text>
           <Text style={styles.sectionValue}>{productPrice ? `$${productPrice}` : ''}</Text>
         </View>
@@ -242,16 +286,27 @@ const PaymentScreen = ({ navigation, route }: PaymentScreenProps) => {
           <Text style={styles.sectionTitle}>默认网络</Text>
           <Text style={styles.sectionValue}>{factor?.network ?? '以太网'}</Text>
         </View>
-        <Text style={styles.infoTip}>银联系统将自动进行兑换，商家收到对应法币金额</Text>
+        <Text style={styles.infoTip}>银联系统将自动进行兑换，商家收到对应法币金额</Text> */}
 
         <TouchableOpacity style={styles.sectionRow} onPress={() => setSelectingCard(true)}>
           <Text style={styles.sectionTitle}>支付方式</Text>
-          <Text style={styles.sectionValue}>
-            {(() => {
-              const c = cards.find((x) => x.id === selectedCardId);
-              return `${c?.name ?? '银行卡'} [${maskToken((c as any)?.pan || '')}] >`;
-            })()}
-          </Text>
+          <View style={styles.payMethodRight}>
+    <Text
+      style={styles.payMethodText}
+      numberOfLines={1}
+      ellipsizeMode="tail"
+    >
+      {(() => {
+        const c = cards.find((x) => x.id === selectedCardId);
+        return `${c?.name ?? '银行卡'} [${maskToken(c?.pan || '')}]`;
+      })()}
+    </Text>
+
+    <Text style={styles.tokenText}>
+      {' > '}
+      {selectingTokenSymbol || ''}
+    </Text>
+  </View>
         </TouchableOpacity>
 
         {(tokenSymbol || network) && (
@@ -268,12 +323,12 @@ const PaymentScreen = ({ navigation, route }: PaymentScreenProps) => {
           </View>
         )}
 
-        {memo && (
+        {/* {memo && (
           <View style={styles.sectionRow}>
             <Text style={styles.sectionTitle}>Memo</Text>
             <Text style={styles.sectionValue}>{memo}</Text>
           </View>
-        )}
+        )} */}
 
         <View style={styles.agreeRow}>
           <Pressable
@@ -288,60 +343,61 @@ const PaymentScreen = ({ navigation, route }: PaymentScreenProps) => {
         <TouchableOpacity
           disabled={!agreed}
           onPress={() => {
-            setSuccessVisible(true);
-            setTxnLoading(true);
-            setTxnError('');
-            (async () => {
-              let ac: AbortController | undefined;
-              let tid: any;
-              try {
-                ac = new AbortController();
-                tid = setTimeout(() => ac?.abort(), 30000);
-                const res = await fetch('http://172.20.10.6:8088/api/v1/posTransaction/QRcodeConsumeActiveScan', {
-                  method: 'POST',
-                  headers: { 'Content-Type': 'application/json' },
-                  body: JSON.stringify({
-                    primaryAccountNumber: '6258071001604153',
-                    transactionAmount: String(factor?.transactionAmount ?? amount ?? ''),
-                    terminalId: String(factor?.terminalId ?? ''),
-                    merchantId: String(factor?.merchantId ?? ''),
-                    referenceNumber: String(factor?.referenceNumber ?? ''),
-                  }),
-                  signal: ac.signal,
-                });
-                const json = await res.json();
-                console.warn('json', json);
-                const d = json?.data ?? {};
-                const mapped = {
-                  txHash: String(d?.txHash ?? ''),
-                  status: String(d?.status ?? ''),
-                  blockNumber: String(d?.blockNumber ?? ''),
-                  timestamp: String(d?.timestamp ?? ''),
-                  fromAddress: String(d?.fromAddress ?? ''),
-                  toAddress: String(d?.toAddress ?? ''),
-                  gasUsed: String(d?.gasUsed ?? ''),
-                  gasPrice: String(d?.gasPrice ?? ''),
-                  gasCost: String(d?.gasCost ?? ''),
-                  inputData: String(d?.inputData ?? ''),
-                  functionName: String(d?.functionName ?? ''),
-                  events: Array.isArray(d?.events) ? d.events : [],
-                  tokenTransfers: Array.isArray(d?.tokenTransfers) ? d.tokenTransfers : [],
-                  merchantId: String(d?.merchantId ?? ''),
-                  terminalId: String(d?.terminalId ?? ''),
-                  referenceNumber: String(d?.referenceNumber ?? ''),
-                  transactionAmount: String(d?.transactionAmount ?? ''),
-                  statusCode: String(json?.statusCode ?? ''),
-                  msg: String(json?.msg ?? ''),
-                  totalPay: String((Number(d?.transactionAmount ?? 0) + Number(d?.gasCost ?? 0))),
-                } as any;
-                setTxn(mapped);
-              } catch (e: any) {
-                setTxnError(String(e?.message || e));
-              } finally {
-                if (tid) clearTimeout(tid);
-                setTxnLoading(false);
-              }
-            })();
+            // setSuccessVisible(true);
+            // setTxnLoading(true);
+            // setTxnError('');
+            // (async () => {
+            //   let ac: AbortController | undefined;
+            //   let tid: any;
+            //   try {
+            //     ac = new AbortController();
+            //     tid = setTimeout(() => ac?.abort(), 30000);
+            //     const res = await fetch('http://172.20.10.6:8088/api/v1/posTransaction/QRcodeConsumeActiveScan', {
+            //       method: 'POST',
+            //       headers: { 'Content-Type': 'application/json' },
+            //       body: JSON.stringify({
+            //         primaryAccountNumber: '6258071001604153',
+            //         transactionAmount: String(factor?.transactionAmount ?? amount ?? ''),
+            //         terminalId: String(factor?.terminalId ?? ''),
+            //         merchantId: String(factor?.merchantId ?? ''),
+            //         referenceNumber: String(factor?.referenceNumber ?? ''),
+            //       }),
+            //       signal: ac.signal,
+            //     });
+            //     const json = await res.json();
+            //     console.warn('json', json);
+            //     const d = json?.data ?? {};
+            //     const mapped = {
+            //       txHash: String(d?.txHash ?? ''),
+            //       status: String(d?.status ?? ''),
+            //       blockNumber: String(d?.blockNumber ?? ''),
+            //       timestamp: String(d?.timestamp ?? ''),
+            //       fromAddress: String(d?.fromAddress ?? ''),
+            //       toAddress: String(d?.toAddress ?? ''),
+            //       gasUsed: String(d?.gasUsed ?? ''),
+            //       gasPrice: String(d?.gasPrice ?? ''),
+            //       gasCost: String(d?.gasCost ?? ''),
+            //       inputData: String(d?.inputData ?? ''),
+            //       functionName: String(d?.functionName ?? ''),
+            //       events: Array.isArray(d?.events) ? d.events : [],
+            //       tokenTransfers: Array.isArray(d?.tokenTransfers) ? d.tokenTransfers : [],
+            //       merchantId: String(d?.merchantId ?? ''),
+            //       terminalId: String(d?.terminalId ?? ''),
+            //       referenceNumber: String(d?.referenceNumber ?? ''),
+            //       transactionAmount: String(d?.transactionAmount ?? ''),
+            //       statusCode: String(json?.statusCode ?? ''),
+            //       msg: String(json?.msg ?? ''),
+            //       totalPay: String((Number(d?.transactionAmount ?? 0) + Number(d?.gasCost ?? 0))),
+            //     } as any;
+            //     setTxn(mapped);
+            //   } catch (e: any) {
+            //     setTxnError(String(e?.message || e));
+            //   } finally {
+            //     if (tid) clearTimeout(tid);
+            //     setTxnLoading(false);
+            //   }
+            // })();
+            setShowPasswordScreen(true);
           }}
           style={[styles.payBtn, !agreed && styles.payBtnDisabled]}
         >
@@ -367,13 +423,23 @@ const PaymentScreen = ({ navigation, route }: PaymentScreenProps) => {
                 style={styles.cardItem}
                 onPress={() => {
                   setSelectedCardId(c.id);
+                  setSelectingTokenSymbol(c.balances?.[0]?.tokenSymbol || '');
                   setSelectingCard(false);
                 }}
               >
                 <View style={styles.cardThumb} />
                 <View style={styles.cardMiddle}>
                   <Text style={styles.cardName}>{(c as any).name} [{maskToken((c as any).pan)}]</Text>
-                  <Text style={styles.cardBalance}>可用余额 ￥****</Text>
+                  {/* 显示余额信息 */}
+                  {c.balances.length > 0 ? (
+                    c.balances.map((balanceInfo: any, idx: number) => (
+                      <Text key={idx} style={styles.cardBalance}>
+                        {balanceInfo.tokenSymbol}: {balanceInfo.balance}
+                      </Text>
+                    ))
+                  ) : (
+                    <Text style={styles.cardBalance}>无余额信息</Text>
+                  )}
                 </View>
                 {selectedCardId === c.id ? (
                   <Text style={styles.selectedBadge}>✓</Text>
@@ -385,7 +451,183 @@ const PaymentScreen = ({ navigation, route }: PaymentScreenProps) => {
           </View>
         </View>
       )}
-      {successVisible && !detailsVisible && (
+      {showPasswordScreen && (
+        <View style={styles.sheet}>
+          <View style={styles.handle} />
+
+          <View style={styles.headerRow}>
+            <TouchableOpacity onPress={() => setShowPasswordScreen(false)} style={styles.closeBtn}>
+              <Text style={styles.closeText}>←</Text>
+            </TouchableOpacity>
+            <Text style={styles.sheetTitle}>输入支付密码</Text>
+          </View>
+
+          {/* Display Product Price and Gas Fee */}
+          <View style={styles.sectionRow}><Text style={styles.sectionTitle}>商品价格</Text><Text style={styles.sectionValue}>{productPrice ? `$${productPrice}` : ''}</Text></View>
+          <View style={styles.sectionRow}><Text style={styles.sectionTitle}>Gas费</Text><Text style={styles.sectionValue}>{gasFee ? `$${gasFee}` : ''}</Text></View>
+          <View style={styles.sectionRow}><Text style={styles.sectionTitle}>实际支付</Text><Text style={styles.sectionValue}>{totalPay ? `$${totalPay}` : ''}</Text></View>
+
+          {/* Password Input */}
+          <View style={styles.pwdContainer}>
+            {Array.from({ length: 6 }).map((_, i) => (
+              <View key={i} style={styles.pwdBox}>
+                <Text style={styles.pwdDot}>
+                  {payPassword.length > i ? '●' : ''}
+                </Text>
+              </View>
+            ))}
+
+            {/* 真正接收输入的隐藏输入框 */}
+            <TextInput
+              value={payPassword}
+              onChangeText={(v) => {
+                if (/^\d*$/.test(v) && v.length <= 6) {
+                  setPayPassword(v);
+                }
+              }}
+              keyboardType="number-pad"
+              secureTextEntry
+              maxLength={6}
+              style={styles.hiddenInput}
+              autoFocus
+            />
+          </View>
+
+          <TouchableOpacity
+            onPress={() => {
+              // Handle payment processing
+              console.log('Payment Confirmed');
+              // After payment confirmation, you can proceed to success page or reset
+              Keyboard.dismiss();              // ✅ 1. 收起键盘
+              //setShowPasswordScreen(false);    // ✅ 2. 关闭密码页
+              //setSuccessVisible(true);
+              setPayStatus('loading');
+              //setTxnLoading(true);
+              setTxnError('');
+              (async () => {
+                let ac: AbortController | undefined;
+                let tid: any;
+                try {
+                  ac = new AbortController();
+                  tid = setTimeout(() => ac?.abort(), 30000);
+                  const res = await fetch('http://172.20.10.6:8088/api/v1/posTransaction/QRcodeConsumeActiveScan', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                      primaryAccountNumber: '625807******4153',
+                      transactionAmount: String(factor?.transactionAmount ?? amount ?? ''),
+                      tokenSymbol: selectingTokenSymbol ?? '',
+                      terminalId: String(factor?.terminalId ?? ''),
+                      merchantId: String(factor?.merchantId ?? ''),
+                      referenceNumber: String(factor?.referenceNumber ?? ''),
+                    }),
+                    signal: ac.signal,
+                  });
+                  const json = await res.json();
+                  console.warn('json', json);
+                  const d = json?.data ?? {};
+                  if (json?.statusCode === '00') {
+                    setPayStatus('success');
+                  } else {
+                    setPayStatus('timeout');
+                  }
+                  // const mapped = {
+                  //   txHash: String(d?.txHash ?? ''),
+                  //   status: String(d?.status ?? ''),
+                  //   blockNumber: String(d?.blockNumber ?? ''),
+                  //   timestamp: String(d?.timestamp ?? ''),
+                  //   fromAddress: String(d?.fromAddress ?? ''),
+                  //   toAddress: String(d?.toAddress ?? ''),
+                  //   gasUsed: String(d?.gasUsed ?? ''),
+                  //   gasPrice: String(d?.gasPrice ?? ''),
+                  //   gasCost: String(d?.gasCost ?? ''),
+                  //   inputData: String(d?.inputData ?? ''),
+                  //   functionName: String(d?.functionName ?? ''),
+                  //   events: Array.isArray(d?.events) ? d.events : [],
+                  //   tokenTransfers: Array.isArray(d?.tokenTransfers) ? d.tokenTransfers : [],
+                  //   merchantId: String(d?.merchantId ?? ''),
+                  //   terminalId: String(d?.terminalId ?? ''),
+                  //   referenceNumber: String(d?.referenceNumber ?? ''),
+                  //   transactionAmount: String(d?.transactionAmount ?? ''),
+                  //   statusCode: String(json?.statusCode ?? ''),
+                  //   msg: String(json?.msg ?? ''),
+                  //   totalPay: String((Number(d?.transactionAmount ?? 0) + Number(d?.gasCost ?? 0))),
+                  // } as any;
+                  // setTxn(mapped);
+                } catch (e: any) {
+                  setTxnError(String(e?.message || e));
+                  setPayStatus('timeout');
+                } finally {
+                  if (tid) clearTimeout(tid);
+                }
+              })();
+            }}
+            style={styles.payBtn}
+          >
+            <Text style={styles.payBtnText}>支付</Text>
+          </TouchableOpacity>
+        </View>
+      )}
+
+      {payStatus === 'loading' && (
+        <View style={styles.loadingContainer}>
+          <ActivityIndicator size="large" />
+        </View>
+      )}
+      {payStatus === 'success' && (
+        <View style={styles.fullScreenMask}>
+          <Text style={styles.successTitle}>支付成功</Text>
+
+          <View style={{ marginTop: 24, alignSelf: 'stretch' }}>
+            <View style={styles.sectionRow}>
+              <Text style={styles.sectionTitle}>商品价格</Text>
+              <Text style={styles.sectionValue}>{productPrice ? `$${productPrice}` : ''}</Text>
+            </View>
+
+            <View style={styles.sectionRow}>
+              <Text style={styles.sectionTitle}>Gas费</Text>
+              <Text style={styles.sectionValue}>{gasFee ? `$${gasFee}` : ''}</Text>
+            </View>
+
+            <View style={styles.sectionRow}>
+              <Text style={styles.sectionTitle}>实际支付</Text>
+              <Text style={[styles.sectionValue, { fontWeight: '600' }]}>
+                {totalPay ? `$${totalPay}` : ''}
+              </Text>
+            </View>
+          </View>
+
+          <TouchableOpacity
+            style={[styles.payBtn, { marginTop: 30, alignSelf: 'stretch' }]}
+            onPress={() => {
+              setPayStatus('idle');
+              navigation.popToTop();
+            }}
+          >
+            <Text style={styles.payBtnText}>完成</Text>
+          </TouchableOpacity>
+        </View>
+      )}
+
+      {payStatus === 'timeout' && (
+        <View style={styles.fullScreenMask}>
+          <Text style={styles.failTitle}>支付超时</Text>
+          <Text style={styles.waitDesc}>网络异常或区块确认超时，请重试</Text>
+
+          <TouchableOpacity
+            style={[styles.payBtn, { marginTop: 30, alignSelf: 'stretch' }]}
+            onPress={() => {
+              setPayStatus('idle');
+              navigation.popToTop();
+            }}
+          >
+            <Text style={styles.payBtnText}>返回</Text>
+          </TouchableOpacity>
+        </View>
+      )}
+
+      
+      {/* {successVisible && !detailsVisible && (
         <View style={styles.overlay}>
           <View style={[styles.sheet, styles.successSheet]}>
             <Text style={styles.successTitle}>交易结果</Text>
@@ -440,7 +682,8 @@ const PaymentScreen = ({ navigation, route }: PaymentScreenProps) => {
             </TouchableOpacity>
           </View>
         </View>
-      )}
+      )} */}
+      
       {/* 交易详情改为全屏页面，半屏详情已移除 */}
     </View>
   );
@@ -536,7 +779,6 @@ const styles = StyleSheet.create({
   sectionValue: {
     fontSize: 13,
     color: '#333',
-    width: '80%',
   },
   loadingRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 8 },
   addrRight: { flexDirection: 'row', alignItems: 'center', gap: 8 },
@@ -551,6 +793,36 @@ const styles = StyleSheet.create({
   tipText: { marginTop: 6, fontSize: 11, color: '#888' },
   infoTip: { marginTop: 8, fontSize: 12, color: '#666' },
   sheetTitle: { fontSize: 16, fontWeight: '600', color: '#222' },
+  pwdContainer: {
+  flexDirection: 'row',
+  justifyContent: 'space-between',
+  marginTop: 20,
+  marginBottom: 20,
+  position: 'relative',
+},
+
+  pwdBox: {
+    width: 44,
+    height: 44,
+    borderWidth: 1,
+    borderColor: '#ddd',
+    borderRadius: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+
+  pwdDot: {
+    fontSize: 22,
+    fontWeight: '700',
+  },
+
+  hiddenInput: {
+    position: 'absolute',
+    opacity: 0,
+    width: '100%',
+    height: '100%',
+  },
+
   cardList: { marginTop: 8 },
   cardItem: {
     flexDirection: 'row',
@@ -599,6 +871,34 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     marginTop: 12,
   },
+  loadingContainer: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#fff',
+  },
+  waitTitle: {
+    marginTop: 20,
+    fontSize: 18,
+    fontWeight: '600',
+    textAlign: 'center',
+  },
+
+  waitDesc: {
+    marginTop: 12,
+    fontSize: 13,
+    color: '#666',
+    textAlign: 'center',
+  },
+
+  failTitle: {
+    marginTop: 20,
+    fontSize: 18,
+    fontWeight: '600',
+    color: '#e53935',
+    textAlign: 'center',
+  },
+
   checkbox: {
     width: 18,
     height: 18,
@@ -633,11 +933,46 @@ const styles = StyleSheet.create({
   payBtnDisabled: {
     backgroundColor: '#ccc',
   },
+  fullScreenMask: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: '#fff',
+    zIndex: 999,
+    elevation: 999,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 16,
+  },
+
   payBtnText: {
     color: '#fff',
     fontSize: 16,
     fontWeight: '600',
   },
+  payMethodRight: {
+  flex: 1,
+  flexDirection: 'row',
+  justifyContent: 'flex-end',
+  alignItems: 'center',
+},
+
+payMethodText: {
+  fontSize: 13,
+  color: '#333',
+  flexShrink: 1, // 让左边内容被压缩
+},
+
+tokenText: {
+  fontSize: 13,
+  color: '#333',
+  fontWeight: '600',
+  marginLeft: 4,
+  flexShrink: 0, // 保证币种永远不被挤掉
+},
+
   successSheet: {
     alignItems: 'center',
     minHeight: '45%',
@@ -668,6 +1003,7 @@ const styles = StyleSheet.create({
   box: { marginTop: 8, alignSelf: 'stretch', borderColor: '#eee', borderWidth: 1, borderRadius: 8, padding: 12 },
   boxTitle: { fontSize: 13, color: '#333', marginBottom: 8, fontWeight: '600' },
   boxText: { fontSize: 12, color: '#444' },
+  
 });
 
 export default PaymentScreen;

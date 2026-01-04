@@ -14,7 +14,7 @@ export type RootStackParamList = {
   MainTabs: undefined;
   QrScan: undefined;
   ScanResult: { text: string };
-  OrderList: { userId?: string } | undefined;
+  OrderList: { userId?: string, tokenSymbol?: string } | undefined;
   OrderDetails: { referenceNumber: string };
   TransactionDetails: {
     txn?: any;
