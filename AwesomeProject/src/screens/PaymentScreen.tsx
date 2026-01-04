@@ -139,7 +139,7 @@ const PaymentScreen = ({ navigation, route }: PaymentScreenProps) => {
       }));
       //1.4不从交易要素获取商品价格
       const amt = obj.transactionAmount != null ? Number(obj.transactionAmount) : 0;
-      setProductPrice(amt);
+      setProductPrice(amt.toFixed(4) as unknown as number);
       // const total = (amt + Number(gasFee || 0)).toFixed(4);
   //     const total =
   // Number.isFinite(Number(amt))
@@ -154,7 +154,7 @@ const PaymentScreen = ({ navigation, route }: PaymentScreenProps) => {
   const gas = Number(gasFee);
 
   if (!Number.isFinite(price) || !Number.isFinite(gas)) {
-    setTotalPay('0.0000');
+    setTotalPay('计算中…');
     return;
   }
 
