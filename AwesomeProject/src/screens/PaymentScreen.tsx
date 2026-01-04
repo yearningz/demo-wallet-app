@@ -37,7 +37,7 @@ const PaymentScreen = ({ navigation, route }: PaymentScreenProps) => {
   const [stableOpen, setStableOpen] = useState(false);
   const [stableOptions, setStableOptions] = useState<string[]>(stableDefault);
   const [gasFee, setGasFee] = useState('');
-  const [productPrice, setProductPrice] = useState<string>('');
+  const [productPrice, setProductPrice] = useState<number>(0);
   const [totalPay, setTotalPay] = useState<string>('');
   const [txn, setTxn] = useState<any | null>(null);
   const [txnLoading, setTxnLoading] = useState(false);
@@ -137,12 +137,30 @@ const PaymentScreen = ({ navigation, route }: PaymentScreenProps) => {
         transactionAmount: obj.transactionAmount != null ? Number(obj.transactionAmount) : (prev || {}).transactionAmount,
         transactionType: obj.transactionType ?? (prev || {}).transactionType,
       }));
+      //1.4不从交易要素获取商品价格
       const amt = obj.transactionAmount != null ? Number(obj.transactionAmount) : 0;
-      setProductPrice(amt ? String(amt) : '');
-      const total = (amt + Number(gasFee || 0)).toFixed(4);
-      setTotalPay(total ? String(total) : '');
+      setProductPrice(amt);
+      // const total = (amt + Number(gasFee || 0)).toFixed(4);
+  //     const total =
+  // Number.isFinite(Number(amt))
+  //   ? (Number(amt) + Number(gasFee || 0)).toFixed(4)
+  //   : '0.0000';
+  //     setTotalPay(total ? String(total) : '');
     }
-  }, [scanText, gasFee]);
+  }, [scanText]);
+
+  useEffect(() => {
+  const price = Number(productPrice);
+  const gas = Number(gasFee);
+
+  if (!Number.isFinite(price) || !Number.isFinite(gas)) {
+    setTotalPay('0.0000');
+    return;
+  }
+
+  setTotalPay((price + gas).toFixed(4));
+}, [productPrice, gasFee]);
+
 
   const fetchTransFactor = useCallback(async () => {
     try {
@@ -168,7 +186,7 @@ const PaymentScreen = ({ navigation, route }: PaymentScreenProps) => {
       }));
       // setGasFee(data?.gasCost != null ? String(data.gasCost) : '');
       setProductPrice(prev => prev); // 交易金额仍来自 scanText
-      setTotalPay(prev => prev);
+      // setTotalPay(prev => prev);
     } catch (e: any) {
       setFactorError(String(e?.message || e));
     } finally {
@@ -190,9 +208,6 @@ const PaymentScreen = ({ navigation, route }: PaymentScreenProps) => {
 
     const gas = json?.data != null ? Number(json.data) : 0;
     setGasFee(String(gas));
-    const amt = Number(factor?.transactionAmount ?? productPrice ?? 0);
-    const total = amt + gas;
-    setTotalPay(String(total));
 
   } catch (e) {
     console.warn('fetchGasCost error', e);
