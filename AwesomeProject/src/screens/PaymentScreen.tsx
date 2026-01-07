@@ -61,7 +61,7 @@ const PaymentScreen = ({ navigation, route }: PaymentScreenProps) => {
   const scanText = (route?.params as any)?.scanText as string | undefined;
   const [payPassword, setPayPassword] = useState('');
 // 支付状态：idle | paying | success | timeout
- const [payStatus, setPayStatus] = useState<'idle' | 'loading' | 'success' | 'timeout'>('idle');
+  const [payStatus, setPayStatus] = useState<'idle' | 'loading' | 'success' | 'timeout'>('idle');
 
   const address = to ?? '';
   const maskAddress = (addr: string) => {
@@ -91,7 +91,7 @@ const PaymentScreen = ({ navigation, route }: PaymentScreenProps) => {
     if (start >= 0 && end > start) {
       const jsonStr = s.slice(start, end + 1);
       console.warn('jsonStr', jsonStr);
-      try { 
+      try {
         const obj = JSON.parse(jsonStr);
         if (obj && typeof obj === 'object') return obj;
       } catch {}
@@ -117,13 +117,13 @@ const PaymentScreen = ({ navigation, route }: PaymentScreenProps) => {
           name: c?.cardType === 'S' ? '稳定币账户' : (c?.issuingInstitution || '银行卡'),
           pan: String(c?.primaryAccountNumber || ''),
           type: c?.cardType === 'S' ? 'stable' : 'bank',
-          balances: c?.balanceInfos || [], 
+          balances: c?.balanceInfos || [],
         }));
         setCards(mapped);
         if (!selectedCardId && mapped.length > 0) {
           setSelectedCardId(mapped[0].id);
           setSelectingTokenSymbol(mapped[0].balances?.[0]?.tokenSymbol || '');
-}
+        }
       } catch (e: any) {
         setCardsError(String(e?.message || e));
       } finally {
@@ -147,53 +147,27 @@ const PaymentScreen = ({ navigation, route }: PaymentScreenProps) => {
       //1.4不从交易要素获取商品价格
       const amt = obj.transactionAmount != null ? Number(obj.transactionAmount) : 0;
       setProductPrice(amt.toFixed(4) as unknown as number);
-      if (String(obj?.transactionType) == '预授权') {
-        (async () => {
-          try {
-            setPreAuthLoading(true);
-            setPreAuthError('');
-            const res = await fetch('http://172.20.10.6:8088/api/v1/preAuth/checkPreAuth', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({
-                primaryAccountNumber: '625807******4153',
-                tokenSymbol: 'USDC',
-                userId: '03572638',
-              }),
-            });
-            const json = await res.json();
-            console.warn('preAuth json', json);
-            setPreAuthInfo(json?.data ?? null);
-            if (json?.statusCode === '00' && json?.data && json?.data?.approved === false) {
-              setPreAuthSheetVisible(true);
-            }
-          } catch (e: any) {
-            setPreAuthError(String(e?.message || e));
-          } finally {
-            setPreAuthLoading(false);
-          }
-        })();
-      }
+      // 预授权检查移至“确认付款”点击后执行
       // const total = (amt + Number(gasFee || 0)).toFixed(4);
-  //     const total =
-  // Number.isFinite(Number(amt))
-  //   ? (Number(amt) + Number(gasFee || 0)).toFixed(4)
-  //   : '0.0000';
-  //     setTotalPay(total ? String(total) : '');
+      //     const total =
+      // Number.isFinite(Number(amt))
+      //   ? (Number(amt) + Number(gasFee || 0)).toFixed(4)
+      //   : '0.0000';
+      //     setTotalPay(total ? String(total) : '');
     }
   }, [scanText]);
 
   useEffect(() => {
-  const price = Number(productPrice);
-  const gas = Number(gasFee);
+    const price = Number(productPrice);
+    const gas = Number(gasFee);
 
-  if (!Number.isFinite(price) || !Number.isFinite(gas)) {
-    setTotalPay('计算中…');
-    return;
-  }
+    if (!Number.isFinite(price) || !Number.isFinite(gas)) {
+      setTotalPay('计算中…');
+      return;
+    }
 
-  setTotalPay((price + gas).toFixed(4));
-}, [productPrice, gasFee]);
+    setTotalPay((price + gas).toFixed(4));
+  }, [productPrice, gasFee]);
 
 
   const fetchTransFactor = useCallback(async () => {
@@ -240,39 +214,39 @@ const PaymentScreen = ({ navigation, route }: PaymentScreenProps) => {
     );
     const json = await res.json();
 
-    const gas = json?.data != null ? Number(json.data) : 0;
-    setGasFee(String(gas));
+      const gas = json?.data != null ? Number(json.data) : 0;
+      setGasFee(String(gas));
 
-  } catch (e) {
-    console.warn('fetchGasCost error', e);
-    setGasFee('');
-  }
-}, []);
+    } catch (e) {
+      console.warn('fetchGasCost error', e);
+      setGasFee('');
+    }
+  }, []);
 
-useEffect(() => {
-  if (showPasswordScreen) {
-    fetchGasCost();
-  }
-}, [showPasswordScreen, fetchGasCost]);
+  useEffect(() => {
+    if (showPasswordScreen) {
+      fetchGasCost();
+    }
+  }, [showPasswordScreen, fetchGasCost]);
 
-useEffect(() => {
-  if (showPasswordScreen) {
-    setPayPassword('');
-    const task = InteractionManager.runAfterInteractions(() => {
-      requestAnimationFrame(() => {
-        passwordInputRef.current?.focus?.();
+  useEffect(() => {
+    if (showPasswordScreen) {
+      setPayPassword('');
+      const task = InteractionManager.runAfterInteractions(() => {
+        requestAnimationFrame(() => {
+          passwordInputRef.current?.focus?.();
+        });
       });
-    });
-    return () => {
-      task.cancel();
-    };
-  }
-}, [showPasswordScreen]);
-useEffect(() => {
-  if (showPasswordScreen) {
-    passwordInputRef.current?.focus?.();
-  }
-}, [showPasswordScreen]);
+      return () => {
+        task.cancel();
+      };
+    }
+  }, [showPasswordScreen]);
+  useEffect(() => {
+    if (showPasswordScreen) {
+      passwordInputRef.current?.focus?.();
+    }
+  }, [showPasswordScreen]);
 
   useEffect(() => {
     fetchTransFactor();
@@ -281,40 +255,40 @@ useEffect(() => {
   return (
     <View style={styles.overlay}>
       {!lockSheets && !showPasswordScreen && !successVisible && !selectingCard && !preAuthSheetVisible && (
-      <View style={styles.sheet}>
-        <View style={styles.handle} />
+        <View style={styles.sheet}>
+          <View style={styles.handle} />
 
-        <View style={styles.headerRow}>
-          <TouchableOpacity onPress={() => navigation.goBack()} style={styles.closeBtn}>
-            <Text style={styles.closeText}>×</Text>
-          </TouchableOpacity>
-          <TouchableOpacity style={styles.helpBtn}>
-            <Text style={styles.helpText}>?</Text>
-          </TouchableOpacity>
-        </View>
+          <View style={styles.headerRow}>
+            <TouchableOpacity onPress={() => navigation.goBack()} style={styles.closeBtn}>
+              <Text style={styles.closeText}>×</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={styles.helpBtn}>
+              <Text style={styles.helpText}>?</Text>
+            </TouchableOpacity>
+          </View>
 
-        {factorLoading && <Text style={styles.sectionDesc}>正在获取交易要素…</Text>}
-        {!!factorError && <Text style={styles.sectionDesc}>错误：{factorError}</Text>}
+          {factorLoading && <Text style={styles.sectionDesc}>正在获取交易要素…</Text>}
+          {!!factorError && <Text style={styles.sectionDesc}>错误：{factorError}</Text>}
 
-        {/* <View style={styles.amountBlock}>
+          {/* <View style={styles.amountBlock}>
           <Text style={styles.currency}>$</Text>
                <Text style={styles.amount}>{factor?.transactionAmount != null ? `${String(factor?.transactionAmount)}`  : ''}</Text>
         </View> */}
 
-        <View style={{ alignSelf: 'stretch', marginTop: 8 }}>
-          <View style={styles.sectionRow}><Text style={styles.sectionTitle}>商户号</Text><Text style={styles.sectionValue}>{factor?.merchantId ?? '-'}</Text></View>
-          <View style={styles.sectionRow}><Text style={styles.sectionTitle}>终端号</Text><Text style={styles.sectionValue}>{factor?.terminalId ?? '-'}</Text></View>
-          {/* <View style={styles.sectionRow}><Text style={styles.sectionTitle}>交易金额</Text><Text style={styles.sectionValue}>{factor?.transactionAmount != null ? `$${String(factor?.transactionAmount)}` : '-'}</Text></View> */}
-          <View style={styles.sectionRow}><Text style={styles.sectionTitle}>订单号</Text><Text style={styles.sectionValue}>{factor?.referenceNumber ?? '-'}</Text></View>
-          <View style={styles.sectionRow}><Text style={styles.sectionTitle}>商品价格</Text><Text style={styles.sectionValue}>{productPrice ? `$${productPrice}` : ''}</Text></View>
-          {factor?.transactionType === '预授权' && (
-            <View style={styles.sectionRow}><Text style={styles.sectionTitle}>订单类型</Text><Text style={styles.sectionValue}>预授权</Text></View>
-          )}
-        
-        </View>
+          <View style={{ alignSelf: 'stretch', marginTop: 8 }}>
+            <View style={styles.sectionRow}><Text style={styles.sectionTitle}>商户号</Text><Text style={styles.sectionValue}>{factor?.merchantId ?? '-'}</Text></View>
+            <View style={styles.sectionRow}><Text style={styles.sectionTitle}>终端号</Text><Text style={styles.sectionValue}>{factor?.terminalId ?? '-'}</Text></View>
+            {/* <View style={styles.sectionRow}><Text style={styles.sectionTitle}>交易金额</Text><Text style={styles.sectionValue}>{factor?.transactionAmount != null ? `$${String(factor?.transactionAmount)}` : '-'}</Text></View> */}
+            <View style={styles.sectionRow}><Text style={styles.sectionTitle}>订单号</Text><Text style={styles.sectionValue}>{factor?.referenceNumber ?? '-'}</Text></View>
+            <View style={styles.sectionRow}><Text style={styles.sectionTitle}>商品价格</Text><Text style={styles.sectionValue}>{productPrice ? `$${productPrice}` : ''}</Text></View>
+            {factor?.transactionType === '预授权' && (
+              <View style={styles.sectionRow}><Text style={styles.sectionTitle}>订单类型</Text><Text style={styles.sectionValue}>预授权</Text></View>
+            )}
 
-        {/* 账户安全地址 */}
-        {/* <View style={styles.sectionRow}>
+          </View>
+
+          {/* 账户安全地址 */}
+          {/* <View style={styles.sectionRow}>
           <Text style={styles.sectionTitle}>链上账户地址</Text>
           <View style={styles.addrRight}>
             <Text style={styles.sectionValue}>{maskAddress(factor?.blockchainAddress ?? '')}</Text>
@@ -322,8 +296,8 @@ useEffect(() => {
           </View>
         </View> */}
 
-        {/* 稳定币选择 */}
-        {/* <Pressable style={styles.sectionRow} onPress={() => setStableOpen((v) => !v)}>
+          {/* 稳定币选择 */}
+          {/* <Pressable style={styles.sectionRow} onPress={() => setStableOpen((v) => !v)}>
           <Text style={styles.sectionTitle}>稳定币</Text>
           <Text style={styles.sectionValue}>{selectedStable} ▾</Text>
         </Pressable>
@@ -337,8 +311,8 @@ useEffect(() => {
           </View>
         )} */}
 
-        {/* 商品价格与费用 */}
-        {/* <View style={styles.sectionRow}>
+          {/* 商品价格与费用 */}
+          {/* <View style={styles.sectionRow}>
           <Text style={styles.sectionTitle}>商品价格</Text>
           <Text style={styles.sectionValue}>{productPrice ? `$${productPrice}` : ''}</Text>
         </View>
@@ -359,122 +333,152 @@ useEffect(() => {
         </View>
         <Text style={styles.infoTip}>银联系统将自动进行兑换，商家收到对应法币金额</Text> */}
 
-        <TouchableOpacity style={styles.sectionRow} onPress={() => setSelectingCard(true)}>
-          <Text style={styles.sectionTitle}>支付方式</Text>
-          <View style={styles.payMethodRight}>
-    <Text
-      style={styles.payMethodText}
-      numberOfLines={1}
-      ellipsizeMode="tail"
-    >
-      {(() => {
-        const c = cards.find((x) => x.id === selectedCardId);
-        return `${c?.name ?? '银行卡'} [${maskToken(c?.pan || '')}]`;
-      })()}
-    </Text>
+          <TouchableOpacity style={styles.sectionRow} onPress={() => setSelectingCard(true)}>
+            <Text style={styles.sectionTitle}>支付方式</Text>
+            <View style={styles.payMethodRight}>
+              <Text
+                style={styles.payMethodText}
+                numberOfLines={1}
+                ellipsizeMode="tail"
+              >
+                {(() => {
+                  const c = cards.find((x) => x.id === selectedCardId);
+                  return `${c?.name ?? '银行卡'} [${maskToken(c?.pan || '')}]`;
+                })()}
+              </Text>
 
-    <Text style={styles.tokenText}>
-      {' > '}
-      {selectingTokenSymbol || ''}
-    </Text>
-  </View>
-        </TouchableOpacity>
+              <Text style={styles.tokenText}>
+                {' > '}
+                {selectingTokenSymbol || ''}
+              </Text>
+            </View>
+          </TouchableOpacity>
 
-        {(tokenSymbol || network) && (
-          <View style={styles.sectionRow}>
-            <Text style={styles.sectionTitle}>代币与网络</Text>
-            <Text style={styles.sectionValue}>{tokenSymbol ?? '-'} / {network ?? '-'}</Text>
-          </View>
-        )}
+          {(tokenSymbol || network) && (
+            <View style={styles.sectionRow}>
+              <Text style={styles.sectionTitle}>代币与网络</Text>
+              <Text style={styles.sectionValue}>{tokenSymbol ?? '-'} / {network ?? '-'}</Text>
+            </View>
+          )}
 
-        {to && (
-          <View style={styles.sectionRow}>
-            <Text style={styles.sectionTitle}>接收地址</Text>
-            <Text style={styles.sectionValue}>{to}</Text>
-          </View>
-        )}
+          {to && (
+            <View style={styles.sectionRow}>
+              <Text style={styles.sectionTitle}>接收地址</Text>
+              <Text style={styles.sectionValue}>{to}</Text>
+            </View>
+          )}
 
-        {/* {memo && (
+          {/* {memo && (
           <View style={styles.sectionRow}>
             <Text style={styles.sectionTitle}>Memo</Text>
             <Text style={styles.sectionValue}>{memo}</Text>
           </View>
         )} */}
 
-        <View style={styles.agreeRow}>
-          <Pressable
-            onPress={() => setAgreed((v) => !v)}
-            style={[styles.checkbox, agreed && styles.checkboxChecked]}
-          >
-            {agreed ? <Text style={styles.checkboxTick}>✓</Text> : null}
-          </Pressable>
-          <Text style={styles.agreeText}>我已阅读并同意相关协议</Text>
-        </View>
+          <View style={styles.agreeRow}>
+            <Pressable
+              onPress={() => setAgreed((v) => !v)}
+              style={[styles.checkbox, agreed && styles.checkboxChecked]}
+            >
+              {agreed ? <Text style={styles.checkboxTick}>✓</Text> : null}
+            </Pressable>
+            <Text style={styles.agreeText}>我已阅读并同意相关协议</Text>
+          </View>
 
-        <TouchableOpacity
-          disabled={!agreed}
-          onPress={() => {
-            // setSuccessVisible(true);
-            // setTxnLoading(true);
-            // setTxnError('');
-            // (async () => {
-            //   let ac: AbortController | undefined;
-            //   let tid: any;
-            //   try {
-            //     ac = new AbortController();
-            //     tid = setTimeout(() => ac?.abort(), 30000);
-            //     const res = await fetch('http://172.20.10.14:4523/m1/7468733-7203316-default/api/v1/posTransaction/QRcodeConsumeActiveScan', {
-            //       method: 'POST',
-            //       headers: { 'Content-Type': 'application/json' },
-            //       body: JSON.stringify({
-            //         primaryAccountNumber: '6258071001604153',
-            //         transactionAmount: String(factor?.transactionAmount ?? amount ?? ''),
-            //         terminalId: String(factor?.terminalId ?? ''),
-            //         merchantId: String(factor?.merchantId ?? ''),
-            //         referenceNumber: String(factor?.referenceNumber ?? ''),
-            //       }),
-            //       signal: ac.signal,
-            //     });
-            //     const json = await res.json();
-            //     console.warn('json', json);
-            //     const d = json?.data ?? {};
-            //     const mapped = {
-            //       txHash: String(d?.txHash ?? ''),
-            //       status: String(d?.status ?? ''),
-            //       blockNumber: String(d?.blockNumber ?? ''),
-            //       timestamp: String(d?.timestamp ?? ''),
-            //       fromAddress: String(d?.fromAddress ?? ''),
-            //       toAddress: String(d?.toAddress ?? ''),
-            //       gasUsed: String(d?.gasUsed ?? ''),
-            //       gasPrice: String(d?.gasPrice ?? ''),
-            //       gasCost: String(d?.gasCost ?? ''),
-            //       inputData: String(d?.inputData ?? ''),
-            //       functionName: String(d?.functionName ?? ''),
-            //       events: Array.isArray(d?.events) ? d.events : [],
-            //       tokenTransfers: Array.isArray(d?.tokenTransfers) ? d.tokenTransfers : [],
-            //       merchantId: String(d?.merchantId ?? ''),
-            //       terminalId: String(d?.terminalId ?? ''),
-            //       referenceNumber: String(d?.referenceNumber ?? ''),
-            //       transactionAmount: String(d?.transactionAmount ?? ''),
-            //       statusCode: String(json?.statusCode ?? ''),
-            //       msg: String(json?.msg ?? ''),
-            //       totalPay: String((Number(d?.transactionAmount ?? 0) + Number(d?.gasCost ?? 0))),
-            //     } as any;
-            //     setTxn(mapped);
-            //   } catch (e: any) {
-            //     setTxnError(String(e?.message || e));
-            //   } finally {
-            //     if (tid) clearTimeout(tid);
-            //     setTxnLoading(false);
-            //   }
-            // })();
-            setShowPasswordScreen(true);
-          }}
-          style={[styles.payBtn, !agreed && styles.payBtnDisabled]}
-        >
-          <Text style={styles.payBtnText}>确认付款</Text>
-        </TouchableOpacity>
-      </View>
+          <TouchableOpacity
+            disabled={!agreed}
+            onPress={() => {
+              // setSuccessVisible(true);
+              // setTxnLoading(true);
+              // setTxnError('');
+              // (async () => {
+              //   let ac: AbortController | undefined;
+              //   let tid: any;
+              //   try {
+              //     ac = new AbortController();
+              //     tid = setTimeout(() => ac?.abort(), 30000);
+              //     const res = await fetch('http://172.20.10.14:4523/m1/7468733-7203316-default/api/v1/posTransaction/QRcodeConsumeActiveScan', {
+              //       method: 'POST',
+              //       headers: { 'Content-Type': 'application/json' },
+              //       body: JSON.stringify({
+              //         primaryAccountNumber: '6258071001604153',
+              //         transactionAmount: String(factor?.transactionAmount ?? amount ?? ''),
+              //         terminalId: String(factor?.terminalId ?? ''),
+              //         merchantId: String(factor?.merchantId ?? ''),
+              //         referenceNumber: String(factor?.referenceNumber ?? ''),
+              //       }),
+              //       signal: ac.signal,
+              //     });
+              //     const json = await res.json();
+              //     console.warn('json', json);
+              //     const d = json?.data ?? {};
+              //     const mapped = {
+              //       txHash: String(d?.txHash ?? ''),
+              //       status: String(d?.status ?? ''),
+              //       blockNumber: String(d?.blockNumber ?? ''),
+              //       timestamp: String(d?.timestamp ?? ''),
+              //       fromAddress: String(d?.fromAddress ?? ''),
+              //       toAddress: String(d?.toAddress ?? ''),
+              //       gasUsed: String(d?.gasUsed ?? ''),
+              //       gasPrice: String(d?.gasPrice ?? ''),
+              //       gasCost: String(d?.gasCost ?? ''),
+              //       inputData: String(d?.inputData ?? ''),
+              //       functionName: String(d?.functionName ?? ''),
+              //       events: Array.isArray(d?.events) ? d.events : [],
+              //       tokenTransfers: Array.isArray(d?.tokenTransfers) ? d.tokenTransfers : [],
+              //       merchantId: String(d?.merchantId ?? ''),
+              //       terminalId: String(d?.terminalId ?? ''),
+              //       referenceNumber: String(d?.referenceNumber ?? ''),
+              //       transactionAmount: String(d?.transactionAmount ?? ''),
+              //       statusCode: String(json?.statusCode ?? ''),
+              //       msg: String(json?.msg ?? ''),
+              //       totalPay: String((Number(d?.transactionAmount ?? 0) + Number(d?.gasCost ?? 0))),
+              //     } as any;
+              //     setTxn(mapped);
+              //   } catch (e: any) {
+              //     setTxnError(String(e?.message || e));
+              //   } finally {
+              //     if (tid) clearTimeout(tid);
+              //     setTxnLoading(false);
+              //   }
+              // })();
+              const isPreAuth = String(factor?.transactionType) === '预授权';
+              if (!isPreAuth) {
+                setShowPasswordScreen(true);
+                return;
+              }
+              (async () => {
+                try {
+                  setPreAuthLoading(true);
+                  setPreAuthError('');
+                  const res = await fetch('http://172.20.10.14:4523/m1/7468733-7203316-default/api/v1/preAuth/checkPreAuth', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                      primaryAccountNumber: '625807******4153',
+                      tokenSymbol: selectingTokenSymbol || '',
+                      userId: '03572638',
+                    }),
+                  });
+                  const json = await res.json();
+                  setPreAuthInfo(json?.data ?? null);
+                  if (json?.statusCode === '00' && json?.data?.approved === true) {
+                    setShowPasswordScreen(true);
+                  } else {
+                    setPreAuthSheetVisible(true);
+                  }
+                } catch (e: any) {
+                  setPreAuthError(String(e?.message || e));
+                } finally {
+                  setPreAuthLoading(false);
+                }
+              })();
+            }}
+            style={[styles.payBtn, !agreed && styles.payBtnDisabled]}
+          >
+            <Text style={styles.payBtnText}>确认付款</Text>
+          </TouchableOpacity>
+        </View>
       )}
       {!lockSheets && !successVisible && selectingCard && !preAuthSheetVisible && (
         <View style={styles.sheet}>
@@ -628,28 +632,28 @@ useEffect(() => {
                   const isPreAuth = String(factor?.transactionType) === '预授权';
                   const usePreAuth = isPreAuth && preAuthInfo?.approved === true;
                   const url = usePreAuth
-                    ? 'http://172.20.10.6:8088/api/v1/preAuth/preAuth'
-                    : 'http://172.20.10.6:8088/api/v1/posTransaction/QRcodeConsumeActiveScan';
+                    ? 'http://172.20.10.14:4523/m1/7468733-7203316-default/api/v1/preAuth/preAuth'
+                    : 'http://172.20.10.14:4523/m1/7468733-7203316-default/api/v1/posTransaction/QRcodeConsumeActiveScan';
                   const body = usePreAuth
                     ? {
-                        primaryAccountNumber: '625807******4153',
-                        transactionAmount: String(factor?.transactionAmount ?? amount ?? ''),
-                        tokenSymbol: selectingTokenSymbol ?? preAuthInfo?.tokenSymbol ?? '',
-                        terminalId: String(factor?.terminalId ?? ''),
-                        merchantId: String(factor?.merchantId ?? ''),
-                        referenceNumber: String(factor?.referenceNumber ?? ''),
-                        payerAddress: String(preAuthInfo?.payerAddress ?? ''),
-                        tokenAddress: String(preAuthInfo?.tokenAddress ?? ''),
-                        permit2Address: String(preAuthInfo?.permit2Address ?? ''),
-                      }
+                      primaryAccountNumber: '625807******4153',
+                      transactionAmount: String(factor?.transactionAmount ?? amount ?? ''),
+                      tokenSymbol: selectingTokenSymbol ?? preAuthInfo?.tokenSymbol ?? '',
+                      terminalId: String(factor?.terminalId ?? ''),
+                      merchantId: String(factor?.merchantId ?? ''),
+                      referenceNumber: String(factor?.referenceNumber ?? ''),
+                      payerAddress: String(preAuthInfo?.payerAddress ?? ''),
+                      tokenAddress: String(preAuthInfo?.tokenAddress ?? ''),
+                      permit2Address: String(preAuthInfo?.permit2Address ?? ''),
+                    }
                     : {
-                        primaryAccountNumber: '625807******4153',
-                        transactionAmount: String(factor?.transactionAmount ?? amount ?? ''),
-                        tokenSymbol: selectingTokenSymbol ?? '',
-                        terminalId: String(factor?.terminalId ?? ''),
-                        merchantId: String(factor?.merchantId ?? ''),
-                        referenceNumber: String(factor?.referenceNumber ?? ''),
-                      };
+                      primaryAccountNumber: '625807******4153',
+                      transactionAmount: String(factor?.transactionAmount ?? amount ?? ''),
+                      tokenSymbol: selectingTokenSymbol ?? '',
+                      terminalId: String(factor?.terminalId ?? ''),
+                      merchantId: String(factor?.merchantId ?? ''),
+                      referenceNumber: String(factor?.referenceNumber ?? ''),
+                    };
                   const res = await fetch(url, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
@@ -759,7 +763,7 @@ useEffect(() => {
         </View>
       )}
 
-      
+
       {/* {successVisible && !detailsVisible && (
         <View style={styles.overlay}>
           <View style={[styles.sheet, styles.successSheet]}>
@@ -816,7 +820,7 @@ useEffect(() => {
           </View>
         </View>
       )} */}
-      
+
       {/* 交易详情改为全屏页面，半屏详情已移除 */}
     </View>
   );
@@ -934,12 +938,12 @@ const styles = StyleSheet.create({
   infoTip: { marginTop: 8, fontSize: 12, color: '#666' },
   sheetTitle: { fontSize: 16, fontWeight: '600', color: '#222' },
   pwdContainer: {
-  flexDirection: 'row',
-  justifyContent: 'space-between',
-  marginTop: 20,
-  marginBottom: 20,
-  position: 'relative',
-},
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginTop: 20,
+    marginBottom: 20,
+    position: 'relative',
+  },
 
   pwdBox: {
     width: 44,
@@ -1096,25 +1100,25 @@ const styles = StyleSheet.create({
     fontWeight: '600',
   },
   payMethodRight: {
-  flex: 1,
-  flexDirection: 'row',
-  justifyContent: 'flex-end',
-  alignItems: 'center',
-},
+    flex: 1,
+    flexDirection: 'row',
+    justifyContent: 'flex-end',
+    alignItems: 'center',
+  },
 
-payMethodText: {
-  fontSize: 13,
-  color: '#333',
-  flexShrink: 1, // 让左边内容被压缩
-},
+  payMethodText: {
+    fontSize: 13,
+    color: '#333',
+    flexShrink: 1, // 让左边内容被压缩
+  },
 
-tokenText: {
-  fontSize: 13,
-  color: '#333',
-  fontWeight: '600',
-  marginLeft: 4,
-  flexShrink: 0, // 保证币种永远不被挤掉
-},
+  tokenText: {
+    fontSize: 13,
+    color: '#333',
+    fontWeight: '600',
+    marginLeft: 4,
+    flexShrink: 0, // 保证币种永远不被挤掉
+  },
 
   successSheet: {
     alignItems: 'center',
@@ -1146,7 +1150,7 @@ tokenText: {
   box: { marginTop: 8, alignSelf: 'stretch', borderColor: '#eee', borderWidth: 1, borderRadius: 8, padding: 12 },
   boxTitle: { fontSize: 13, color: '#333', marginBottom: 8, fontWeight: '600' },
   boxText: { fontSize: 12, color: '#444' },
-  
+
 });
 
 export default PaymentScreen;
