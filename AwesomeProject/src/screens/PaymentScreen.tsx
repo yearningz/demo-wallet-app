@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   View,
   Text,
@@ -7,6 +7,7 @@ import {
   TouchableOpacity,
   Pressable,
   ActivityIndicator,
+  InteractionManager,
 } from 'react-native';
 
 import { PaymentScreenProps } from '../navigation/types';
@@ -47,6 +48,12 @@ const PaymentScreen = ({ navigation, route }: PaymentScreenProps) => {
   const [factorLoading, setFactorLoading] = useState(false);
   const [factorError, setFactorError] = useState('');
   const [showPasswordScreen, setShowPasswordScreen] = useState(false);
+  const [preAuthInfo, setPreAuthInfo] = useState<any | null>(null);
+  const [preAuthLoading, setPreAuthLoading] = useState(false);
+  const [preAuthError, setPreAuthError] = useState('');
+  const [preAuthSheetVisible, setPreAuthSheetVisible] = useState(false);
+  const passwordInputRef = useRef<any>(null);
+  const [lockSheets, setLockSheets] = useState(false);
   const tokenSymbol = route?.params?.tokenSymbol;
   const network = route?.params?.network;
   const to = (route?.params as any)?.to as string | undefined;
@@ -98,7 +105,7 @@ const PaymentScreen = ({ navigation, route }: PaymentScreenProps) => {
       try {
         setCardsLoading(true);
         setCardsError('');
-        const res = await fetch('http://172.20.10.6:8088/api/v1/posTransaction/queryCards?userId=03572638', {
+        const res = await fetch('http://172.20.10.14:4523/m1/7468733-7203316-default/api/v1/posTransaction/queryCards?userId=03572638', {
           method: 'GET',
           headers: { 'Content-Type': 'application/json' },
         });
@@ -140,6 +147,33 @@ const PaymentScreen = ({ navigation, route }: PaymentScreenProps) => {
       //1.4不从交易要素获取商品价格
       const amt = obj.transactionAmount != null ? Number(obj.transactionAmount) : 0;
       setProductPrice(amt.toFixed(4) as unknown as number);
+      if (String(obj?.transactionType) == '预授权') {
+        (async () => {
+          try {
+            setPreAuthLoading(true);
+            setPreAuthError('');
+            const res = await fetch('http://172.20.10.14:4523/m1/7468733-7203316-default/api/v1/preAuth/checkPreAuth', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                primaryAccountNumber: '625807******4153',
+                tokenSymbol: 'USDC',
+                userId: '03572638',
+              }),
+            });
+            const json = await res.json();
+            console.warn('preAuth json', json);
+            setPreAuthInfo(json?.data ?? null);
+            if (json?.statusCode === '00' && json?.data && json?.data?.approved === false) {
+              setPreAuthSheetVisible(true);
+            }
+          } catch (e: any) {
+            setPreAuthError(String(e?.message || e));
+          } finally {
+            setPreAuthLoading(false);
+          }
+        })();
+      }
       // const total = (amt + Number(gasFee || 0)).toFixed(4);
   //     const total =
   // Number.isFinite(Number(amt))
@@ -166,7 +200,7 @@ const PaymentScreen = ({ navigation, route }: PaymentScreenProps) => {
     try {
       setFactorLoading(true);
       setFactorError('');
-      const res = await fetch('http://172.20.10.6:8088/api/v1/posTransaction/queryTransFactor?primaryAccountNumber=625807******4153', {
+      const res = await fetch('http://172.20.10.14:4523/m1/7468733-7203316-default/api/v1/posTransaction/queryTransFactor?primaryAccountNumber=625807******4153', {
         method: 'GET',
         headers: { 'Content-Type': 'application/json' },
       });
@@ -198,7 +232,7 @@ const PaymentScreen = ({ navigation, route }: PaymentScreenProps) => {
   try {
     setGasFee('计算中…');
     const res = await fetch(
-      'http://172.20.10.6:8088/api/v1/posTransaction/queryGasCost',
+      'http://172.20.10.14:4523/m1/7468733-7203316-default/api/v1/posTransaction/queryGasCost',
       {
         method: 'GET',
         headers: { 'Content-Type': 'application/json' },
@@ -221,13 +255,32 @@ useEffect(() => {
   }
 }, [showPasswordScreen, fetchGasCost]);
 
+useEffect(() => {
+  if (showPasswordScreen) {
+    setPayPassword('');
+    const task = InteractionManager.runAfterInteractions(() => {
+      requestAnimationFrame(() => {
+        passwordInputRef.current?.focus?.();
+      });
+    });
+    return () => {
+      task.cancel();
+    };
+  }
+}, [showPasswordScreen]);
+useEffect(() => {
+  if (showPasswordScreen) {
+    passwordInputRef.current?.focus?.();
+  }
+}, [showPasswordScreen]);
+
   useEffect(() => {
     fetchTransFactor();
   }, [fetchTransFactor]);
 
   return (
     <View style={styles.overlay}>
-      {!showPasswordScreen && !successVisible && !selectingCard && (
+      {!lockSheets && !showPasswordScreen && !successVisible && !selectingCard && !preAuthSheetVisible && (
       <View style={styles.sheet}>
         <View style={styles.handle} />
 
@@ -254,7 +307,10 @@ useEffect(() => {
           {/* <View style={styles.sectionRow}><Text style={styles.sectionTitle}>交易金额</Text><Text style={styles.sectionValue}>{factor?.transactionAmount != null ? `$${String(factor?.transactionAmount)}` : '-'}</Text></View> */}
           <View style={styles.sectionRow}><Text style={styles.sectionTitle}>订单号</Text><Text style={styles.sectionValue}>{factor?.referenceNumber ?? '-'}</Text></View>
           <View style={styles.sectionRow}><Text style={styles.sectionTitle}>商品价格</Text><Text style={styles.sectionValue}>{productPrice ? `$${productPrice}` : ''}</Text></View>
-          {/* {!!factor?.transactionType && (<View style={styles.sectionRow}><Text style={styles.sectionTitle}>交易类型</Text><Text style={styles.sectionValue}>{factor?.transactionType}</Text></View>)} */}
+          {factor?.transactionType === '预授权' && (
+            <View style={styles.sectionRow}><Text style={styles.sectionTitle}>订单类型</Text><Text style={styles.sectionValue}>预授权</Text></View>
+          )}
+        
         </View>
 
         {/* 账户安全地址 */}
@@ -367,7 +423,7 @@ useEffect(() => {
             //   try {
             //     ac = new AbortController();
             //     tid = setTimeout(() => ac?.abort(), 30000);
-            //     const res = await fetch('http://172.20.10.6:8088/api/v1/posTransaction/QRcodeConsumeActiveScan', {
+            //     const res = await fetch('http://172.20.10.14:4523/m1/7468733-7203316-default/api/v1/posTransaction/QRcodeConsumeActiveScan', {
             //       method: 'POST',
             //       headers: { 'Content-Type': 'application/json' },
             //       body: JSON.stringify({
@@ -420,7 +476,7 @@ useEffect(() => {
         </TouchableOpacity>
       </View>
       )}
-      {!successVisible && selectingCard && (
+      {!lockSheets && !successVisible && selectingCard && !preAuthSheetVisible && (
         <View style={styles.sheet}>
           <View style={styles.handle} />
 
@@ -466,6 +522,49 @@ useEffect(() => {
           </View>
         </View>
       )}
+      {!successVisible && preAuthSheetVisible && (
+        <View style={styles.sheet}>
+          <View style={styles.handle} />
+          <View style={styles.headerRow}>
+            <TouchableOpacity onPress={() => { setPreAuthSheetVisible(false); setLockSheets(true); navigation.goBack(); }} style={styles.closeBtn}>
+              <Text style={styles.closeText}>←</Text>
+            </TouchableOpacity>
+            <Text style={styles.sheetTitle}>预授权</Text>
+          </View>
+          <View style={{ alignSelf: 'stretch', marginTop: 8 }}>
+            <View style={[styles.sectionRow, styles.sectionRowWrap]}>
+              <Text style={styles.sectionTitle}>付款人地址</Text>
+              <View style={styles.valueWrap}><Text style={styles.sectionValue}>{preAuthInfo?.payerAddress ?? '-'}</Text></View>
+            </View>
+            <View style={[styles.sectionRow, styles.sectionRowWrap]}>
+              <Text style={styles.sectionTitle}>代币符号</Text>
+              <View style={styles.valueWrap}><Text style={styles.sectionValue}>{preAuthInfo?.tokenSymbol ?? '-'}</Text></View>
+            </View>
+            <View style={[styles.sectionRow, styles.sectionRowWrap]}>
+              <Text style={styles.sectionTitle}>代币合约地址</Text>
+              <View style={styles.valueWrap}><Text style={styles.sectionValue}>{preAuthInfo?.tokenAddress ?? '-'}</Text></View>
+            </View>
+            <View style={[styles.sectionRow, styles.sectionRowWrap]}>
+              <Text style={styles.sectionTitle}>Permit2合约地址</Text>
+              <View style={styles.valueWrap}><Text style={styles.sectionValue}>{preAuthInfo?.permit2Address ?? '-'}</Text></View>
+            </View>
+            <View style={[styles.sectionRow, styles.sectionRowWrap]}>
+              <Text style={styles.sectionTitle}>授权额度</Text>
+              <View style={styles.valueWrap}><Text style={styles.sectionValue}>{preAuthInfo?.allowance ?? '-'}</Text></View>
+            </View>
+          </View>
+          <TouchableOpacity
+            style={styles.payBtn}
+            onPress={() => {
+              setPreAuthInfo((prev: any) => ({ ...(prev || {}), approved: true }));
+              setPreAuthSheetVisible(false);
+              setShowPasswordScreen(true);
+            }}
+          >
+            <Text style={styles.payBtnText}>确定授权</Text>
+          </TouchableOpacity>
+        </View>
+      )}
       {showPasswordScreen && (
         <View style={styles.sheet}>
           <View style={styles.handle} />
@@ -483,7 +582,7 @@ useEffect(() => {
           <View style={styles.sectionRow}><Text style={styles.sectionTitle}>实际支付</Text><Text style={styles.sectionValue}>{totalPay ? `$${totalPay}` : ''}</Text></View>
 
           {/* Password Input */}
-          <View style={styles.pwdContainer}>
+          <Pressable style={styles.pwdContainer} onPress={() => passwordInputRef.current?.focus?.()}>
             {Array.from({ length: 6 }).map((_, i) => (
               <View key={i} style={styles.pwdBox}>
                 <Text style={styles.pwdDot}>
@@ -494,19 +593,20 @@ useEffect(() => {
 
             {/* 真正接收输入的隐藏输入框 */}
             <TextInput
+              ref={passwordInputRef}
               value={payPassword}
               onChangeText={(v) => {
-                if (/^\d*$/.test(v) && v.length <= 6) {
-                  setPayPassword(v);
-                }
+                const digits = String(v).replace(/\D/g, '').slice(0, 6);
+                setPayPassword(digits);
               }}
               keyboardType="number-pad"
               secureTextEntry
+              caretHidden
               maxLength={6}
               style={styles.hiddenInput}
               autoFocus
             />
-          </View>
+          </Pressable>
 
           <TouchableOpacity
             onPress={() => {
@@ -525,17 +625,35 @@ useEffect(() => {
                 try {
                   ac = new AbortController();
                   tid = setTimeout(() => ac?.abort(), 30000);
-                  const res = await fetch('http://172.20.10.6:8088/api/v1/posTransaction/QRcodeConsumeActiveScan', {
+                  const isPreAuth = String(factor?.transactionType) === '预授权';
+                  const usePreAuth = isPreAuth && preAuthInfo?.approved === true;
+                  const url = usePreAuth
+                    ? 'http://172.20.10.14:4523/m1/7468733-7203316-default/api/v1/preAuth/preAuth'
+                    : 'http://172.20.10.14:4523/m1/7468733-7203316-default/api/v1/posTransaction/QRcodeConsumeActiveScan';
+                  const body = usePreAuth
+                    ? {
+                        primaryAccountNumber: '625807******4153',
+                        transactionAmount: String(factor?.transactionAmount ?? amount ?? ''),
+                        tokenSymbol: selectingTokenSymbol ?? preAuthInfo?.tokenSymbol ?? '',
+                        terminalId: String(factor?.terminalId ?? ''),
+                        merchantId: String(factor?.merchantId ?? ''),
+                        referenceNumber: String(factor?.referenceNumber ?? ''),
+                        payerAddress: String(preAuthInfo?.payerAddress ?? ''),
+                        tokenAddress: String(preAuthInfo?.tokenAddress ?? ''),
+                        permit2Address: String(preAuthInfo?.permit2Address ?? ''),
+                      }
+                    : {
+                        primaryAccountNumber: '625807******4153',
+                        transactionAmount: String(factor?.transactionAmount ?? amount ?? ''),
+                        tokenSymbol: selectingTokenSymbol ?? '',
+                        terminalId: String(factor?.terminalId ?? ''),
+                        merchantId: String(factor?.merchantId ?? ''),
+                        referenceNumber: String(factor?.referenceNumber ?? ''),
+                      };
+                  const res = await fetch(url, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                      primaryAccountNumber: '625807******4153',
-                      transactionAmount: String(factor?.transactionAmount ?? amount ?? ''),
-                      tokenSymbol: selectingTokenSymbol ?? '',
-                      terminalId: String(factor?.terminalId ?? ''),
-                      merchantId: String(factor?.merchantId ?? ''),
-                      referenceNumber: String(factor?.referenceNumber ?? ''),
-                    }),
+                    body: JSON.stringify(body),
                     signal: ac.signal,
                   });
                   const json = await res.json();
@@ -791,9 +909,16 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     alignItems: 'center',
   },
+  sectionRowWrap: {
+    alignItems: 'flex-start',
+  },
   sectionValue: {
     fontSize: 13,
     color: '#333',
+  },
+  valueWrap: {
+    flex: 1,
+    paddingRight: 5,
   },
   loadingRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 8 },
   addrRight: { flexDirection: 'row', alignItems: 'center', gap: 8 },
@@ -833,9 +958,12 @@ const styles = StyleSheet.create({
 
   hiddenInput: {
     position: 'absolute',
-    opacity: 0,
+    opacity: 0.01,
     width: '100%',
     height: '100%',
+    top: 0,
+    left: 0,
+    zIndex: 1,
   },
 
   cardList: { marginTop: 8 },
