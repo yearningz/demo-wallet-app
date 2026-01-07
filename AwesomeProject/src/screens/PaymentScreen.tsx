@@ -451,7 +451,7 @@ const PaymentScreen = ({ navigation, route }: PaymentScreenProps) => {
                 try {
                   setPreAuthLoading(true);
                   setPreAuthError('');
-                  const res = await fetch('http://172.20.10.14:4523/m1/7468733-7203316-default/api/v1/preAuth/checkPreAuth', {
+                  const res = await fetch('http://172.20.10.6:8088/api/v1/preAuth/checkPreAuth', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
@@ -632,8 +632,8 @@ const PaymentScreen = ({ navigation, route }: PaymentScreenProps) => {
                   const isPreAuth = String(factor?.transactionType) === '预授权';
                   const usePreAuth = isPreAuth && preAuthInfo?.approved === true;
                   const url = usePreAuth
-                    ? 'http://172.20.10.14:4523/m1/7468733-7203316-default/api/v1/preAuth/preAuth'
-                    : 'http://172.20.10.14:4523/m1/7468733-7203316-default/api/v1/posTransaction/QRcodeConsumeActiveScan';
+                    ? 'http://172.20.10.6:8088/api/v1/preAuth/preAuth'
+                    : 'http://172.20.10.6:8088/api/v1/posTransaction/QRcodeConsumeActiveScan';
                   const body = usePreAuth
                     ? {
                       primaryAccountNumber: '625807******4153',
