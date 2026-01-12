@@ -7,6 +7,7 @@ import {
   TouchableOpacity,
   Pressable,
   ActivityIndicator,
+  Alert,
   InteractionManager,
 } from 'react-native';
 
@@ -556,9 +557,32 @@ const PaymentScreen = ({ navigation, route }: PaymentScreenProps) => {
           <TouchableOpacity
             style={styles.payBtn}
             onPress={() => {
-              setPreAuthInfo((prev: any) => ({ ...(prev || {}), approved: true }));
-              setPreAuthSheetVisible(false);
-              setShowPasswordScreen(true);
+              (async () => {
+                try {
+                  setPreAuthLoading(true);
+                  const res = await fetch('http://172.20.10.6:8088/api/v1/preAuth/applyPreAuth', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                      primaryAccountNumber: '625807******4153',
+                      tokenSymbol: selectingTokenSymbol || preAuthInfo?.tokenSymbol || '',
+                      userId: '03572638',
+                    }),
+                  });
+                  const json = await res.json();
+                  if (json?.statusCode === '00') {
+                    setPreAuthInfo((prev: any) => ({ ...(prev || {}), ...(json?.data || {}), approved: true }));
+                    setPreAuthSheetVisible(false);
+                    setShowPasswordScreen(true);
+                  } else {
+                    Alert.alert('失败', json?.statusMsg || '授权失败');
+                  }
+                } catch (e: any) {
+                  Alert.alert('错误', e?.message || '网络请求失败');
+                } finally {
+                  setPreAuthLoading(false);
+                }
+              })();
             }}
           >
             <Text style={styles.payBtnText}>确定授权</Text>
