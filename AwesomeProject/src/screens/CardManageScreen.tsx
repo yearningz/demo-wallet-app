@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { SafeAreaView, View, Text, StyleSheet, FlatList, TouchableOpacity, Image } from 'react-native';
+import { SafeAreaView, View, Text, StyleSheet, FlatList, TouchableOpacity, Image, Alert } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 
 const stableSymbols = ['USDT', 'USDC', 'EURC'];
@@ -23,6 +23,30 @@ const CardManageScreen = () => {
   const [cards, setCards] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+
+  const revokePreAuth = async (tokenSymbol: string) => {
+    try {
+      const res = await fetch('http://172.20.10.14:4523/m1/7468733-7203316-default/api/v1/preAuth/revokeApplyPreAuth', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          "userId": "03572638",
+          "primaryAccountNumber": "625807******4153",
+          "tokenSymbol": tokenSymbol
+        }),
+      });
+      const json = await res.json();
+      console.warn('json', json);
+        console.warn('json', json.statusCode);
+      if (json?.statusCode == '00') {
+        Alert.alert('成功', '预授权撤销成功');
+      } else {
+        Alert.alert('失败', json?.statusMsg || '撤销预授权失败');
+      }
+    } catch (e: any) {
+      Alert.alert('错误', e?.message || '网络请求失败');
+    }
+  };
 
   useEffect(() => {
     (async () => {
@@ -90,12 +114,17 @@ const CardManageScreen = () => {
               {(item as any).type === 'stable' && Array.isArray((item as any).coins) && (item as any).coins.length > 0 && (
                 <View style={styles.stableRow}>
                   {(((item as any).coins ?? []) as { symbol: string; balance: string }[]).map((c: { symbol: string; balance: string }, idx: number) => (
-                    <View key={`${c.symbol}-${idx}`} style={styles.stableChip}><Text style={styles.stableChipText}>{`${c.symbol}: ${c.balance}`}</Text>
+                    <View key={`${c.symbol}-${idx}`} style={styles.stableChip}>
+                      <Text style={styles.stableChipText}>{`${c.symbol}: ${c.balance}`}</Text>
                       <TouchableOpacity style={styles.transferBtn} onPress={() => {
                         navigation.navigate('OrderList', { userId: '03572638', tokenSymbol:c.symbol });
                       }}>
                         <Text style={styles.transferText}>详情</Text>
-                      </TouchableOpacity></View>
+                      </TouchableOpacity>
+                      <TouchableOpacity style={styles.transferBtn} onPress={() => revokePreAuth(c.symbol)}>
+                        <Text style={styles.transferText}>撤销预授权</Text>
+                      </TouchableOpacity>
+                    </View>
 
                   ))}
                 </View>
@@ -108,7 +137,7 @@ const CardManageScreen = () => {
               <Text style={styles.transferText}>详情</Text>
             </TouchableOpacity> */}
           </View>
-        )} 
+        )}
       />
     </SafeAreaView>
   );
