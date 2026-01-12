@@ -26,7 +26,7 @@ const CardManageScreen = () => {
 
   const revokePreAuth = async (tokenSymbol: string) => {
     try {
-      const res = await fetch('http://172.20.10.14:4523/m1/7468733-7203316-default/api/v1/preAuth/revokeApplyPreAuth', {
+      const res = await fetch('http://172.20.10.6:8088/api/v1/preAuth/revokeApplyPreAuth', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({

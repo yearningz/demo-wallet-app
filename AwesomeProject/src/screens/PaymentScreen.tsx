@@ -552,10 +552,6 @@ const PaymentScreen = ({ navigation, route }: PaymentScreenProps) => {
               <Text style={styles.sectionTitle}>Permit2合约地址</Text>
               <View style={styles.valueWrap}><Text style={styles.sectionValue}>{preAuthInfo?.permit2Address ?? '-'}</Text></View>
             </View>
-            <View style={[styles.sectionRow, styles.sectionRowWrap]}>
-              <Text style={styles.sectionTitle}>授权额度</Text>
-              <View style={styles.valueWrap}><Text style={styles.sectionValue}>{preAuthInfo?.allowance ?? '-'}</Text></View>
-            </View>
           </View>
           <TouchableOpacity
             style={styles.payBtn}
