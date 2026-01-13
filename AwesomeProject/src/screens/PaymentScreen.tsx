@@ -555,7 +555,8 @@ const PaymentScreen = ({ navigation, route }: PaymentScreenProps) => {
             </View>
           </View>
           <TouchableOpacity
-            style={styles.payBtn}
+            disabled={preAuthLoading}
+            style={[styles.payBtn, preAuthLoading && { opacity: 0.6 }]}
             onPress={() => {
               (async () => {
                 try {
@@ -585,7 +586,7 @@ const PaymentScreen = ({ navigation, route }: PaymentScreenProps) => {
               })();
             }}
           >
-            <Text style={styles.payBtnText}>确定授权</Text>
+            {preAuthLoading ? <ActivityIndicator color="#fff" /> : <Text style={styles.payBtnText}>确定授权</Text>}
           </TouchableOpacity>
         </View>
       )}

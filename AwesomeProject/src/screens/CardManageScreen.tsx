@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { SafeAreaView, View, Text, StyleSheet, FlatList, TouchableOpacity, Image, Alert } from 'react-native';
+import { SafeAreaView, View, Text, StyleSheet, FlatList, TouchableOpacity, Image, Alert, ActivityIndicator } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 
 const stableSymbols = ['USDT', 'USDC', 'EURC'];
@@ -23,9 +23,11 @@ const CardManageScreen = () => {
   const [cards, setCards] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const [revokingSymbol, setRevokingSymbol] = useState<string | null>(null);
 
   const revokePreAuth = async (tokenSymbol: string) => {
     try {
+      setRevokingSymbol(tokenSymbol);
       const res = await fetch('http://172.20.10.6:8088/api/v1/preAuth/revokeApplyPreAuth', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -45,6 +47,8 @@ const CardManageScreen = () => {
       }
     } catch (e: any) {
       Alert.alert('错误', e?.message || '网络请求失败');
+    } finally {
+      setRevokingSymbol(null);
     }
   };
 
@@ -121,8 +125,16 @@ const CardManageScreen = () => {
                       }}>
                         <Text style={styles.transferText}>详情</Text>
                       </TouchableOpacity>
-                      <TouchableOpacity style={styles.transferBtn} onPress={() => revokePreAuth(c.symbol)}>
-                        <Text style={styles.transferText}>撤销预授权</Text>
+                      <TouchableOpacity
+                        style={[styles.transferBtn, revokingSymbol === c.symbol && { opacity: 0.6 }]}
+                        disabled={revokingSymbol === c.symbol}
+                        onPress={() => revokePreAuth(c.symbol)}
+                      >
+                        {revokingSymbol === c.symbol ? (
+                          <ActivityIndicator size="small" color="#666" />
+                        ) : (
+                          <Text style={styles.transferText}>撤销预授权</Text>
+                        )}
                       </TouchableOpacity>
                     </View>
 
