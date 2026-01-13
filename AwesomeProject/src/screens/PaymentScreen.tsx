@@ -649,7 +649,7 @@ const PaymentScreen = ({ navigation, route }: PaymentScreenProps) => {
                 let tid: any;
                 try {
                   ac = new AbortController();
-                  tid = setTimeout(() => ac?.abort(), 30000);
+                  tid = setTimeout(() => ac?.abort(), 60000);
                   const isPreAuth = String(factor?.transactionType) === '预授权';
                   const usePreAuth = isPreAuth && preAuthInfo?.approved === true;
                   const url = usePreAuth
