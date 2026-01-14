@@ -53,6 +53,7 @@ const PaymentScreen = ({ navigation, route }: PaymentScreenProps) => {
   const [preAuthLoading, setPreAuthLoading] = useState(false);
   const [preAuthError, setPreAuthError] = useState('');
   const [preAuthSheetVisible, setPreAuthSheetVisible] = useState(false);
+  const [preAuthSuccessVisible, setPreAuthSuccessVisible] = useState(false);
   const passwordInputRef = useRef<any>(null);
   const [lockSheets, setLockSheets] = useState(false);
   const tokenSymbol = route?.params?.tokenSymbol;
@@ -255,7 +256,7 @@ const PaymentScreen = ({ navigation, route }: PaymentScreenProps) => {
 
   return (
     <View style={styles.overlay}>
-      {!lockSheets && !showPasswordScreen && !successVisible && !selectingCard && !preAuthSheetVisible && (
+      {!lockSheets && !showPasswordScreen && !successVisible && !selectingCard && !preAuthSheetVisible && !preAuthSuccessVisible && (
         <View style={styles.sheet}>
           <View style={styles.handle} />
 
@@ -281,7 +282,10 @@ const PaymentScreen = ({ navigation, route }: PaymentScreenProps) => {
             <View style={styles.sectionRow}><Text style={styles.sectionTitle}>终端号</Text><Text style={styles.sectionValue}>{factor?.terminalId ?? '-'}</Text></View>
             {/* <View style={styles.sectionRow}><Text style={styles.sectionTitle}>交易金额</Text><Text style={styles.sectionValue}>{factor?.transactionAmount != null ? `$${String(factor?.transactionAmount)}` : '-'}</Text></View> */}
             <View style={styles.sectionRow}><Text style={styles.sectionTitle}>订单号</Text><Text style={styles.sectionValue}>{factor?.referenceNumber ?? '-'}</Text></View>
-            <View style={styles.sectionRow}><Text style={styles.sectionTitle}>商品价格</Text><Text style={styles.sectionValue}>{productPrice ? `$${productPrice}` : ''}</Text></View>
+            {factor?.transactionType != '预授权' ? (
+              <View style={styles.sectionRow}><Text style={styles.sectionTitle}>商品价格</Text><Text style={styles.sectionValue}>{productPrice ? `$${productPrice}` : ''}</Text></View>
+            ) :   <View style={styles.sectionRow}><Text style={styles.sectionTitle}>授权金额</Text><Text style={styles.sectionValue}>{productPrice ? `$${productPrice}` : ''}</Text></View>}
+          
             {factor?.transactionType === '预授权' && (
               <View style={styles.sectionRow}><Text style={styles.sectionTitle}>订单类型</Text><Text style={styles.sectionValue}>预授权</Text></View>
             )}
@@ -327,12 +331,11 @@ const PaymentScreen = ({ navigation, route }: PaymentScreenProps) => {
         <View style={styles.sectionRow}>
           <Text style={styles.sectionTitle}>实际支付</Text>
           <Text style={styles.sectionValue}>{totalPay ? `$${totalPay}` : ''}</Text>
-        </View>
+        </View>*/}
         <View style={styles.sectionRow}>
-          <Text style={styles.sectionTitle}>默认网络</Text>
-          <Text style={styles.sectionValue}>{factor?.network ?? '以太网'}</Text>
+          <Text style={styles.sectionTitle}>网络类型</Text>
+          <Text style={styles.sectionValue}>以太网</Text>
         </View>
-        <Text style={styles.infoTip}>银联系统将自动进行兑换，商家收到对应法币金额</Text> */}
 
           <TouchableOpacity style={styles.sectionRow} onPress={() => setSelectingCard(true)}>
             <Text style={styles.sectionTitle}>支付方式</Text>
@@ -347,18 +350,13 @@ const PaymentScreen = ({ navigation, route }: PaymentScreenProps) => {
                   return `${c?.name ?? '银行卡'} [${maskToken(c?.pan || '')}]`;
                 })()}
               </Text>
-
-              <Text style={styles.tokenText}>
-                {' > '}
-                {selectingTokenSymbol || ''}
-              </Text>
             </View>
           </TouchableOpacity>
 
-          {(tokenSymbol || network) && (
+          {(selectingTokenSymbol) && (
             <View style={styles.sectionRow}>
-              <Text style={styles.sectionTitle}>代币与网络</Text>
-              <Text style={styles.sectionValue}>{tokenSymbol ?? '-'} / {network ?? '-'}</Text>
+              <Text style={styles.sectionTitle}>币种</Text>
+              <Text style={styles.sectionValue}>{selectingTokenSymbol ?? '-'} </Text>
             </View>
           )}
 
@@ -398,7 +396,7 @@ const PaymentScreen = ({ navigation, route }: PaymentScreenProps) => {
               //   try {
               //     ac = new AbortController();
               //     tid = setTimeout(() => ac?.abort(), 30000);
-              //     const res = await fetch('http://172.20.10.14:4523/m1/7468733-7203316-default/api/v1/posTransaction/QRcodeConsumeActiveScan', {
+              //     const res = await fetch('http://172.20.10.6:8088/api/v1/posTransaction/QRcodeConsumeActiveScan', {
               //       method: 'POST',
               //       headers: { 'Content-Type': 'application/json' },
               //       body: JSON.stringify({
@@ -477,11 +475,11 @@ const PaymentScreen = ({ navigation, route }: PaymentScreenProps) => {
             }}
             style={[styles.payBtn, !agreed && styles.payBtnDisabled]}
           >
-            <Text style={styles.payBtnText}>确认付款</Text>
+            <Text style={styles.payBtnText}>{String(factor?.transactionType) === '预授权' ? '确认授权' : '确认付款'}</Text>
           </TouchableOpacity>
         </View>
       )}
-      {!lockSheets && !successVisible && selectingCard && !preAuthSheetVisible && (
+      {!lockSheets && !successVisible && selectingCard && !preAuthSheetVisible && !preAuthSuccessVisible && (
         <View style={styles.sheet}>
           <View style={styles.handle} />
 
@@ -527,7 +525,7 @@ const PaymentScreen = ({ navigation, route }: PaymentScreenProps) => {
           </View>
         </View>
       )}
-      {!successVisible && preAuthSheetVisible && (
+      {!successVisible && preAuthSheetVisible && !preAuthSuccessVisible && (
         <View style={styles.sheet}>
           <View style={styles.handle} />
           <View style={styles.headerRow}>
@@ -539,19 +537,19 @@ const PaymentScreen = ({ navigation, route }: PaymentScreenProps) => {
           <View style={{ alignSelf: 'stretch', marginTop: 8 }}>
             <View style={[styles.sectionRow, styles.sectionRowWrap]}>
               <Text style={styles.sectionTitle}>付款人地址</Text>
-              <View style={styles.valueWrap}><Text style={styles.sectionValue}>{preAuthInfo?.payerAddress ?? '-'}</Text></View>
+              <Text style={styles.sectionValue}>{preAuthInfo?.payerAddress ?? '-'}</Text>
             </View>
             <View style={[styles.sectionRow, styles.sectionRowWrap]}>
-              <Text style={styles.sectionTitle}>代币符号</Text>
-              <View style={styles.valueWrap}><Text style={styles.sectionValue}>{preAuthInfo?.tokenSymbol ?? '-'}</Text></View>
+              <Text style={styles.sectionTitle}>代币</Text>
+              <Text style={styles.sectionValue}>{preAuthInfo?.tokenSymbol ?? '-'}</Text>
             </View>
             <View style={[styles.sectionRow, styles.sectionRowWrap]}>
               <Text style={styles.sectionTitle}>代币合约地址</Text>
-              <View style={styles.valueWrap}><Text style={styles.sectionValue}>{preAuthInfo?.tokenAddress ?? '-'}</Text></View>
+              <Text style={styles.sectionValue}>{preAuthInfo?.tokenAddress ?? '-'}</Text>       
             </View>
             <View style={[styles.sectionRow, styles.sectionRowWrap]}>
               <Text style={styles.sectionTitle}>Permit2合约地址</Text>
-              <View style={styles.valueWrap}><Text style={styles.sectionValue}>{preAuthInfo?.permit2Address ?? '-'}</Text></View>
+              <Text style={styles.sectionValue}>{preAuthInfo?.permit2Address ?? '-'}</Text>
             </View>
           </View>
           <TouchableOpacity
@@ -574,10 +572,7 @@ const PaymentScreen = ({ navigation, route }: PaymentScreenProps) => {
                   if (json?.statusCode === '00') {
                     setPreAuthInfo((prev: any) => ({ ...(prev || {}), ...(json?.data || {}), approved: true }));
                     setPreAuthSheetVisible(false);
-                    setShowPasswordScreen(true);
-                    try {
-                      navigation.navigate('PreAuthSuccess', { tokenSymbol: selectingTokenSymbol || preAuthInfo?.tokenSymbol || '' });
-                    } catch {}
+                    setPreAuthSuccessVisible(true);
                   } else {
                     Alert.alert('失败', json?.statusMsg || '授权失败');
                   }
@@ -590,6 +585,46 @@ const PaymentScreen = ({ navigation, route }: PaymentScreenProps) => {
             }}
           >
             {preAuthLoading ? <ActivityIndicator color="#fff" /> : <Text style={styles.payBtnText}>确定授权</Text>}
+          </TouchableOpacity>
+        </View>
+      )}
+      {!lockSheets && !successVisible && preAuthSuccessVisible && (
+        <View style={styles.sheet}>
+          <View style={styles.handle} />
+          <View style={styles.headerRow}>
+            <TouchableOpacity onPress={() => setPreAuthSuccessVisible(false)} style={styles.closeBtn}>
+              <Text style={styles.closeText}>←</Text>
+            </TouchableOpacity>
+            <Text style={styles.sheetTitle}>预授权成功</Text>
+          </View>
+          <View style={{ alignSelf: 'stretch', marginTop: 8 }}>
+            <View style={styles.sectionRow}>
+              <Text style={styles.sectionTitle}>授权金额</Text>
+              <Text style={styles.sectionValue}>
+                {factor?.transactionAmount != null ? `$${String(factor?.transactionAmount)}` : (amount ? `$${amount}` : '')}
+              </Text>
+            </View>
+            <View style={styles.sectionRow}>
+              <Text style={styles.sectionTitle}>链上交易哈希</Text>
+              <Text style={styles.sectionValue}>{preAuthInfo?.txHash ?? '-'}</Text>
+            </View>
+            <View style={styles.sectionRow}>
+              <Text style={styles.sectionTitle}>区块号</Text>
+              <Text style={styles.sectionValue}>{preAuthInfo?.blockNumber ?? '-'}</Text>
+            </View>
+            <View style={styles.sectionRow}>
+              <Text style={styles.sectionTitle}>区块时间戳</Text>
+              <Text style={styles.sectionValue}>{formatTimestamp(preAuthInfo?.timestamp)}</Text>
+            </View>
+          </View>
+          <TouchableOpacity
+            style={[styles.payBtn, { marginTop: 30, alignSelf: 'stretch' }]}
+            onPress={() => {
+              setPreAuthSuccessVisible(false);
+              setShowPasswordScreen(true);
+            }}
+          >
+            <Text style={styles.payBtnText}>完成</Text>
           </TouchableOpacity>
         </View>
       )}
@@ -764,9 +799,13 @@ const PaymentScreen = ({ navigation, route }: PaymentScreenProps) => {
 
             <View style={styles.sectionRow}>
               <Text style={styles.sectionTitle}>实际支付</Text>
-              <Text style={[styles.sectionValue, { fontWeight: '600' }]}>
+              <Text style={[styles.sectionValue]}>
                 {totalPay ? `$${totalPay}` : ''}
               </Text>
+            </View>
+            <View style={styles.sectionRow}>
+              <Text style={styles.sectionTitle}>网络类型</Text>
+              <Text style={styles.sectionValue}>以太坊</Text>
             </View>
             <View style={styles.sectionRow}>
               <Text style={styles.sectionTitle}>链上交易哈希</Text>
@@ -949,7 +988,7 @@ const styles = StyleSheet.create({
     color: '#222',
     marginBottom: 4,
     fontWeight: '600',
-    width: 80,
+    width: 90,
   },
   sectionDesc: {
     fontSize: 12,
@@ -967,10 +1006,12 @@ const styles = StyleSheet.create({
   sectionValue: {
     fontSize: 13,
     color: '#333',
+    textAlign: 'right',
+    width: '60%',
   },
   valueWrap: {
-    flex: 1,
-    paddingRight: 5,
+    width: '80%',
+    textAlign: 'left',
   },
   loadingRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 8 },
   addrRight: { flexDirection: 'row', alignItems: 'center', gap: 8 },

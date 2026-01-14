@@ -25,6 +25,23 @@ const CardManageScreen = () => {
   const [preAuthMap, setPreAuthMap] = useState<Record<string, boolean>>({});
   const [applyingSymbol, setApplyingSymbol] = useState<string | null>(null);
 
+  const recheckPreAuth = async (tokenSymbol: string) => {
+    try {
+      const res = await fetch('http://172.20.10.6:8088/api/v1/preAuth/checkPreAuth', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          primaryAccountNumber: '625807******4153',
+          tokenSymbol,
+          userId: '03572638',
+        }),
+      });
+      const json = await res.json();
+      const approved = json?.statusCode === '00' && json?.data?.approved === true;
+      setPreAuthMap((prev) => ({ ...(prev || {}), [tokenSymbol]: approved }));
+    } catch {}
+  };
+
   const revokePreAuth = async (tokenSymbol: string) => {
     try {
       setRevokingSymbol(tokenSymbol);
@@ -42,8 +59,10 @@ const CardManageScreen = () => {
         console.warn('json', json.statusCode);
       if (json?.statusCode === '00') {
         Alert.alert('成功', '预授权撤销成功');
+        await recheckPreAuth(tokenSymbol);
       } else {
         Alert.alert('失败', json?.statusMsg || '撤销预授权失败');
+        await recheckPreAuth(tokenSymbol);
       }
     } catch (e: any) {
       Alert.alert('错误', e?.message || '网络请求失败');
@@ -67,7 +86,7 @@ const CardManageScreen = () => {
       const json = await res.json();
       if (json?.statusCode === '00') {
         try {
-          navigation.navigate('PreAuthSuccess', { tokenSymbol });
+          navigation.navigate('PreAuthSuccess', { tokenSymbol, txHash: json?.data?.txHash || '', blockNumber: json?.data?.blockNumber || '', timestamp: json?.data?.timestamp || '', referenceNumber: json?.data?.referenceNumber || '' });
         } catch {}
         setPreAuthMap((prev) => ({ ...(prev || {}), [tokenSymbol]: true }));
       } else {
@@ -201,7 +220,7 @@ const CardManageScreen = () => {
                           <ActivityIndicator size="small" color="#666" />
                         ) : (
                           <Text style={styles.transferText}>
-                            {preAuthMap?.[c.symbol] === true ? '撤销预授权' : '预授权'}
+                            {preAuthMap?.[c.symbol] === true ? '撤销预授权' : '开通预授权'}
                           </Text>
                         )}
                       </TouchableOpacity>

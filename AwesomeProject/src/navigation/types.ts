@@ -25,7 +25,15 @@ export type RootStackParamList = {
     gasFee: string;
     totalPay: string;
   };
-  PreAuthSuccess: { tokenSymbol?: string; txHash?: string; blockNumber?: string; timestamp?: string | number; referenceNumber?: string };
+  PreAuthSuccess: {
+    tokenSymbol?: string;
+    transactionAmount?: string;
+    gasFee?: string;
+    txHash?: string;
+    blockNumber?: string;
+    timestamp?: string | number;
+    referenceNumber?: string;
+  };
 };
 
 export type LoginScreenProps = NativeStackScreenProps<RootStackParamList, 'Login'>;
