@@ -23,6 +23,7 @@ import TestHttpsScreen from './src/screens/TestHttpsScreen';
 import TransactionDetailsScreen from './src/screens/TransactionDetailsScreen';
 import OrderListScreen from './src/screens/OrderListScreen';
 import OrderDetailsScreen from './src/screens/OrderDetailsScreen';
+import PreAuthSuccessScreen from './src/screens/PreAuthSuccessScreen';
 
 const Stack = createNativeStackNavigator<RootStackParamList>();
 const Tab = createBottomTabNavigator();
@@ -100,6 +101,7 @@ function App() {
         <Stack.Screen name="OrderList" component={OrderListScreen} />
         <Stack.Screen name="OrderDetails" component={OrderDetailsScreen} />
         <Stack.Screen name="TransactionDetails" component={TransactionDetailsScreen} />
+        <Stack.Screen name="PreAuthSuccess" component={PreAuthSuccessScreen} />
       </Stack.Navigator>
     </NavigationContainer>
   );

@@ -25,6 +25,7 @@ export type RootStackParamList = {
     gasFee: string;
     totalPay: string;
   };
+  PreAuthSuccess: { tokenSymbol?: string; txHash?: string; blockNumber?: string; timestamp?: string | number; referenceNumber?: string };
 };
 
 export type LoginScreenProps = NativeStackScreenProps<RootStackParamList, 'Login'>;
@@ -42,3 +43,4 @@ export type ScanResultScreenProps = NativeStackScreenProps<RootStackParamList, '
 export type OrderListScreenProps = NativeStackScreenProps<RootStackParamList, 'OrderList'>;
 export type OrderDetailsScreenProps = NativeStackScreenProps<RootStackParamList, 'OrderDetails'>;
 export type TransactionDetailsScreenProps = NativeStackScreenProps<RootStackParamList, 'TransactionDetails'>;
+export type PreAuthSuccessScreenProps = NativeStackScreenProps<RootStackParamList, 'PreAuthSuccess'>;

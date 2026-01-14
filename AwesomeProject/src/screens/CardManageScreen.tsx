@@ -2,8 +2,6 @@ import React, { useEffect, useState } from 'react';
 import { SafeAreaView, View, Text, StyleSheet, FlatList, TouchableOpacity, Image, Alert, ActivityIndicator } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 
-const stableSymbols = ['USDT', 'USDC', 'EURC'];
-
 const maskToken = (s: string) => {
   if (!s) return '';
   const head = s.slice(0, 6);
@@ -24,6 +22,8 @@ const CardManageScreen = () => {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [revokingSymbol, setRevokingSymbol] = useState<string | null>(null);
+  const [preAuthMap, setPreAuthMap] = useState<Record<string, boolean>>({});
+  const [applyingSymbol, setApplyingSymbol] = useState<string | null>(null);
 
   const revokePreAuth = async (tokenSymbol: string) => {
     try {
@@ -40,7 +40,7 @@ const CardManageScreen = () => {
       const json = await res.json();
       console.warn('json', json);
         console.warn('json', json.statusCode);
-      if (json?.statusCode == '00') {
+      if (json?.statusCode === '00') {
         Alert.alert('成功', '预授权撤销成功');
       } else {
         Alert.alert('失败', json?.statusMsg || '撤销预授权失败');
@@ -49,6 +49,34 @@ const CardManageScreen = () => {
       Alert.alert('错误', e?.message || '网络请求失败');
     } finally {
       setRevokingSymbol(null);
+    }
+  };
+
+  const applyPreAuth = async (tokenSymbol: string) => {
+    try {
+      setApplyingSymbol(tokenSymbol);
+      const res = await fetch('http://172.20.10.6:8088/api/v1/preAuth/applyPreAuth', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          primaryAccountNumber: '625807******4153',
+          tokenSymbol: tokenSymbol,
+          userId: '03572638',
+        }),
+      });
+      const json = await res.json();
+      if (json?.statusCode === '00') {
+        try {
+          navigation.navigate('PreAuthSuccess', { tokenSymbol });
+        } catch {}
+        setPreAuthMap((prev) => ({ ...(prev || {}), [tokenSymbol]: true }));
+      } else {
+        Alert.alert('失败', json?.statusMsg || '预授权失败');
+      }
+    } catch (e: any) {
+      Alert.alert('错误', e?.message || '网络请求失败');
+    } finally {
+      setApplyingSymbol(null);
     }
   };
 
@@ -83,6 +111,35 @@ const CardManageScreen = () => {
       }
     })();
   }, []);
+
+  useEffect(() => {
+    const symbols = cards
+      .filter((c: any) => c?.type === 'stable')
+      .flatMap((c: any) => (Array.isArray(c?.coins) ? c.coins.map((x: any) => String(x?.symbol || '')) : []));
+    const unique = Array.from(new Set(symbols)).filter((s) => !!s);
+    if (unique.length === 0) return;
+    (async () => {
+      try {
+        const entries = await Promise.all(
+          unique.map(async (s) => {
+            const res = await fetch('http://172.20.10.6:8088/api/v1/preAuth/checkPreAuth', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                primaryAccountNumber: '625807******4153',
+                tokenSymbol: s,
+                userId: '03572638',
+              }),
+            });
+            const json = await res.json();
+            const approved = json?.statusCode === '00' && json?.data?.approved === true;
+            return [s, approved] as [string, boolean];
+          })
+        );
+        setPreAuthMap((prev) => ({ ...(prev || {}), ...Object.fromEntries(entries) }));
+      } catch {}
+    })();
+  }, [cards]);
 
   return (
     <SafeAreaView style={styles.container}>
@@ -126,14 +183,26 @@ const CardManageScreen = () => {
                         <Text style={styles.transferText}>详情</Text>
                       </TouchableOpacity>
                       <TouchableOpacity
-                        style={[styles.transferBtn, revokingSymbol === c.symbol && { opacity: 0.6 }]}
-                        disabled={revokingSymbol === c.symbol}
-                        onPress={() => revokePreAuth(c.symbol)}
+                        style={[
+                          styles.transferBtn,
+                          (revokingSymbol === c.symbol || applyingSymbol === c.symbol) && { opacity: 0.6 },
+                        ]}
+                        disabled={revokingSymbol === c.symbol || applyingSymbol === c.symbol}
+                        onPress={() => {
+                          const approved = preAuthMap?.[c.symbol] === true;
+                          if (approved) {
+                            revokePreAuth(c.symbol);
+                          } else {
+                            applyPreAuth(c.symbol);
+                          }
+                        }}
                       >
-                        {revokingSymbol === c.symbol ? (
+                        {revokingSymbol === c.symbol || applyingSymbol === c.symbol ? (
                           <ActivityIndicator size="small" color="#666" />
                         ) : (
-                          <Text style={styles.transferText}>撤销预授权</Text>
+                          <Text style={styles.transferText}>
+                            {preAuthMap?.[c.symbol] === true ? '撤销预授权' : '预授权'}
+                          </Text>
                         )}
                       </TouchableOpacity>
                     </View>

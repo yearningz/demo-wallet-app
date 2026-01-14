@@ -575,6 +575,9 @@ const PaymentScreen = ({ navigation, route }: PaymentScreenProps) => {
                     setPreAuthInfo((prev: any) => ({ ...(prev || {}), ...(json?.data || {}), approved: true }));
                     setPreAuthSheetVisible(false);
                     setShowPasswordScreen(true);
+                    try {
+                      navigation.navigate('PreAuthSuccess', { tokenSymbol: selectingTokenSymbol || preAuthInfo?.tokenSymbol || '' });
+                    } catch {}
                   } else {
                     Alert.alert('失败', json?.statusMsg || '授权失败');
                   }
@@ -685,6 +688,18 @@ const PaymentScreen = ({ navigation, route }: PaymentScreenProps) => {
                   console.warn('json', json);
                   const d = json?.data ?? {};
                   if (json?.statusCode === '00') {
+                    const mapped = {
+                      txHash: String(d?.txHash ?? ''),
+                      status: String(d?.status ?? ''),
+                      blockNumber: String(d?.blockNumber ?? ''),
+                      timestamp: String(d?.timestamp ?? ''),
+                      merchantId: String(d?.merchantId ?? ''),
+                      terminalId: String(d?.terminalId ?? ''),
+                      referenceNumber: String(d?.referenceNumber ?? ''),
+                      transactionAmount: String(d?.transactionAmount ?? ''),
+                      totalPay: String((Number(d?.transactionAmount ?? 0) + Number(d?.gasCost ?? 0))),
+                    } as any;
+                    setTxn(mapped);
                     setPayStatus('success');
                   } else {
                     setPayStatus('timeout');
@@ -752,6 +767,18 @@ const PaymentScreen = ({ navigation, route }: PaymentScreenProps) => {
               <Text style={[styles.sectionValue, { fontWeight: '600' }]}>
                 {totalPay ? `$${totalPay}` : ''}
               </Text>
+            </View>
+            <View style={styles.sectionRow}>
+              <Text style={styles.sectionTitle}>链上交易哈希</Text>
+              <Text style={styles.sectionValue}>{txn?.txHash ?? '-'}</Text>
+            </View>
+            <View style={styles.sectionRow}>
+              <Text style={styles.sectionTitle}>区块号</Text>
+              <Text style={styles.sectionValue}>{txn?.blockNumber ?? '-'}</Text>
+            </View>
+            <View style={styles.sectionRow}>
+              <Text style={styles.sectionTitle}>区块时间戳</Text>
+              <Text style={styles.sectionValue}>{formatTimestamp(txn?.timestamp)}</Text>
             </View>
           </View>
 
