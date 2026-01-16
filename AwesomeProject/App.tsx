@@ -60,10 +60,15 @@ function MainTabs() {
                 ? require('./src/tabs/mine-selected.png')
                 : require('./src/tabs/mine-unselected.png');
             }
-            // 卡管理
+            if (name === '卡管理') {
+              return focused
+                ? require('./src/tabs/card-selected.png')
+                : require('./src/tabs/card-unselected.png');
+            }
+            // 资产
             return focused
-              ? require('./src/tabs/card-selected.png')
-              : require('./src/tabs/card-unselected.png');
+              ? require('./src/tabs/assets-selected.png')
+              : require('./src/tabs/assets-unseleted.png');
           })();
           return (
             <Image
