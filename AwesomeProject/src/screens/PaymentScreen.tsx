@@ -595,15 +595,9 @@ const PaymentScreen = ({ navigation, route }: PaymentScreenProps) => {
             <TouchableOpacity onPress={() => setPreAuthSuccessVisible(false)} style={styles.closeBtn}>
               <Text style={styles.closeText}>←</Text>
             </TouchableOpacity>
-            <Text style={styles.sheetTitle}>预授权成功</Text>
+            <Text style={styles.sheetTitle}>预授权已开通</Text>
           </View>
-          <View style={{ alignSelf: 'stretch', marginTop: 8 }}>
-            <View style={styles.sectionRow}>
-              <Text style={styles.sectionTitle}>授权金额</Text>
-              <Text style={styles.sectionValue}>
-                {factor?.transactionAmount != null ? `$${String(factor?.transactionAmount)}` : (amount ? `$${amount}` : '')}
-              </Text>
-            </View>
+          <View style={{ alignSelf: 'stretch', marginTop: 8 }}>  
             <View style={styles.sectionRow}>
               <Text style={styles.sectionTitle}>链上交易哈希</Text>
               <Text style={styles.sectionValue}>{preAuthInfo?.txHash ?? '-'}</Text>

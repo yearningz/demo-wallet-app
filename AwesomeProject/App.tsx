@@ -25,8 +25,15 @@ import OrderListScreen from './src/screens/OrderListScreen';
 import OrderDetailsScreen from './src/screens/OrderDetailsScreen';
 import PreAuthSuccessScreen from './src/screens/PreAuthSuccessScreen';
 
+type TabParamList = {
+  首页: undefined;
+  卡管理: undefined;
+  Assets: undefined;
+  我的: undefined;
+};
+
 const Stack = createNativeStackNavigator<RootStackParamList>();
-const Tab = createBottomTabNavigator();
+const Tab = createBottomTabNavigator<TabParamList>();
 
 function MainTabs() {
   return (
@@ -69,6 +76,7 @@ function MainTabs() {
     >
       <Tab.Screen name="首页" component={HomeScreen} />
       <Tab.Screen name="卡管理" component={CardManageScreen} />
+      <Tab.Screen name="Assets" component={AssetsScreen} options={{ tabBarLabel: '资产' }} />
       <Tab.Screen name="我的" component={MineScreen} />
     </Tab.Navigator>
   );
