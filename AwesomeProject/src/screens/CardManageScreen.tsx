@@ -168,7 +168,6 @@ const CardManageScreen = () => {
 
   return (
     <SafeAreaView style={styles.container}>
-      <View style={styles.header} />
       <View style={styles.tabBar}>
         <TouchableOpacity style={styles.tabItem} onPress={() => setActiveTab('bank')}>
           <Text style={[styles.tabText, activeTab === 'bank' && styles.tabActiveText]}>法币账户({cards.filter((c: any) => c?.type === 'bank').length})</Text>

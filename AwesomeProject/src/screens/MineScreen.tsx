@@ -5,9 +5,6 @@ import { WebView } from 'react-native-webview';
 const MineScreen = () => {
   return (
     <SafeAreaView style={styles.container}>
-        <View style={styles.header}>
-                        
-                        </View>
       <WebView
         source={{ uri: 'http://172.20.10.6:8088/app/profile/index.html' }}
         style={styles.webview}

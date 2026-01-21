@@ -20,9 +20,6 @@ type Props = CompositeScreenProps<
 const AssetsScreen = ({}: Props) => {
   return (
     <SafeAreaView style={styles.container}>
-              <View style={styles.header}>
-                  
-                  </View>
       <WebView
         source={{ uri: 'http://172.20.10.6:8088/app/cards/index.html' }}
         style={styles.webview}
