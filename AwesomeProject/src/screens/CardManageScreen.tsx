@@ -2,6 +2,11 @@ import React, { useEffect, useState } from 'react';
 import { SafeAreaView, View, Text, StyleSheet, FlatList, TouchableOpacity, Image, Alert, ActivityIndicator } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 
+const toNumber = (v: unknown) => {
+  const n = typeof v === 'number' ? v : parseFloat(String(v ?? '').replace(/,/g, ''));
+  return Number.isFinite(n) ? n : 0;
+};
+
 const maskToken = (s: string) => {
   if (!s) return '';
   const head = s.slice(0, 6);
@@ -24,6 +29,7 @@ const CardManageScreen = () => {
   const [revokingSymbol, setRevokingSymbol] = useState<string | null>(null);
   const [preAuthMap, setPreAuthMap] = useState<Record<string, boolean>>({});
   const [applyingSymbol, setApplyingSymbol] = useState<string | null>(null);
+  const [activeTab, setActiveTab] = useState<'bank' | 'stable'>('bank');
 
   const recheckPreAuth = async (tokenSymbol: string) => {
     try {
@@ -162,81 +168,136 @@ const CardManageScreen = () => {
 
   return (
     <SafeAreaView style={styles.container}>
-      <View style={styles.header}><Text style={styles.title}>卡管理</Text></View>
+      <View style={styles.header} />
+      <View style={styles.tabBar}>
+        <TouchableOpacity style={styles.tabItem} onPress={() => setActiveTab('bank')}>
+          <Text style={[styles.tabText, activeTab === 'bank' && styles.tabActiveText]}>法币账户({cards.filter((c: any) => c?.type === 'bank').length})</Text>
+          {activeTab === 'bank' && <View style={styles.tabUnderline} />}
+        </TouchableOpacity>
+        <TouchableOpacity style={styles.tabItem} onPress={() => setActiveTab('stable')}>
+          <Text style={[styles.tabText, activeTab === 'stable' && styles.tabActiveText]}>稳定币账户({cards.filter((c: any) => c?.type === 'stable').length})</Text>
+          {activeTab === 'stable' && <View style={styles.tabUnderline} />}
+        </TouchableOpacity>
+      </View>
       {loading && <Text style={styles.loading}>正在加载卡列表…</Text>}
       {!!error && <Text style={styles.error}>错误：{error}</Text>}
       <FlatList
-        data={cards}
+        data={cards.filter((c: any) => c?.type === activeTab)}
         keyExtractor={(item, idx) => String((item as any).id ?? idx)}
         contentContainerStyle={styles.list}
         ListEmptyComponent={!loading && !error ? (
-          <View style={styles.empty}><Text style={styles.emptyText}>暂无卡片</Text></View>
+          <View style={styles.empty}><Text style={styles.emptyText}>{activeTab === 'bank' ? '暂无法币账户' : '暂无稳定币账户'}</Text></View>
         ) : null}
         renderItem={({ item }) => (
-          <View style={[styles.cardRow, ((item as any).type === 'stable') ? styles.rowStable : styles.rowBank]}>
-            {(() => {
-              const t = (item as any).type;
-              const name = String((item as any).name || '');
-              const src = t === 'stable'
-                ? require('../tabs/usdc.png')
-                : name.includes('招商')
+          (item as any).type === 'stable' ? (() => {
+            const coins = Array.isArray((item as any).coins) ? ((item as any).coins as { symbol: string; balance: string }[]) : [];
+            const total = coins.reduce((sum, c) => sum + toNumber(c.balance), 0);
+            const preferredSymbol = coins.find((c) => String(c.symbol || '').toUpperCase() === 'USDC')?.symbol || coins[0]?.symbol || '';
+            const busy = revokingSymbol === preferredSymbol || applyingSymbol === preferredSymbol;
+            const approved = !!preferredSymbol && preAuthMap?.[preferredSymbol] === true;
+
+            return (
+              <View style={[styles.cardRow, styles.rowStable, styles.stableCardRow]}>
+                <View style={styles.stableLeft}>
+                  <Image source={require('../tabs/usdc.png')} style={styles.stableAvatar} resizeMode="contain" />
+                </View>
+                <View style={styles.stableMid}>
+                  <View style={styles.stableTopRow}>
+                    <Text style={styles.stableAddress}>{maskAddress(String((item as any).address || ''))}</Text>
+                  </View>
+                  <View style={styles.stableAssetRow}>
+                    <Text style={styles.stableAssetLabel}>总资产</Text>
+                    <Text style={styles.stableAssetValue}>{total.toFixed(2)}</Text>
+                  </View>
+                  {coins.length > 0 && (
+                    <View style={styles.stableCoinList}>
+                      {coins.map((c, idx) => {
+                        const sym = String(c.symbol || '');
+                        const iconText = sym ? sym[0].toUpperCase() : '◎';
+                        const bg = sym.toUpperCase() === 'USDC' ? '#2F6BFF' : sym.toUpperCase() === 'USDT' ? '#12A066' : '#666';
+                        return (
+                          <View key={`${sym}-${idx}`} style={styles.stableCoinRow}>
+                            <View style={[styles.stableCoinIcon, { backgroundColor: bg }]}>
+                              <Text style={styles.stableCoinIconText}>{iconText}</Text>
+                            </View>
+                            <Text style={styles.stableCoinSymbol}>{sym}</Text>
+                            <Text style={styles.stableCoinBalance}>{String(c.balance ?? '')}</Text>
+                          </View>
+                        );
+                      })}
+                    </View>
+                  )}
+                </View>
+                <View style={styles.stableRight}>
+                  <TouchableOpacity
+                    style={styles.stableActionBtn}
+                    onPress={() => navigation.navigate('OrderList', { userId: '03572638', tokenSymbol: '' })}
+                  >
+                    <Text style={styles.stableActionText}>详情</Text>
+                  </TouchableOpacity>
+                  {!!preferredSymbol && (
+                    <TouchableOpacity
+                      style={[styles.stableActionBtn, busy && { opacity: 0.6 }]}
+                      disabled={busy}
+                      onPress={() => {
+                        if (approved) {
+                          revokePreAuth(preferredSymbol);
+                        } else {
+                          applyPreAuth(preferredSymbol);
+                        }
+                      }}
+                    >
+                      {busy ? (
+                        <ActivityIndicator size="small" color="#666" />
+                      ) : (
+                        <Text style={styles.stableActionText}>{approved ? '撤销预授权' : '开通预授权'}</Text>
+                      )}
+                    </TouchableOpacity>
+                  )}
+                </View>
+              </View>
+            );
+          })() : (
+            <View style={[styles.cardRow, styles.rowBank, styles.bankCardRow]}>
+              {(() => {
+                const name = String((item as any).name || '');
+                const src = name.includes('招商')
                   ? require('../tabs/招商银行.png')
                   : name.includes('上海')
                     ? require('../tabs/上海银行.png')
                     : require('../tabs/card-unselected.png');
-              return (
-                <Image source={src} style={styles.cardImage} resizeMode="contain" />
-              );
-            })()}
-            <View style={styles.cardCenter}>
-              <Text style={styles.cardName}>{(item as any).name} [{maskToken((item as any).token)}]</Text>
-              {(item as any).type === 'stable' && <Text style={styles.addr}>地址 {maskAddress((item as any).address)}</Text>}
-              {(item as any).type === 'stable' && Array.isArray((item as any).coins) && (item as any).coins.length > 0 && (
-                <View style={styles.stableRow}>
-                  {(((item as any).coins ?? []) as { symbol: string; balance: string }[]).map((c: { symbol: string; balance: string }, idx: number) => (
-                    <View key={`${c.symbol}-${idx}`} style={styles.stableChip}>
-                      <Text style={styles.stableChipText}>{`${c.symbol}: ${c.balance}`}</Text>
-                      <TouchableOpacity style={styles.transferBtn} onPress={() => {
-                        navigation.navigate('OrderList', { userId: '03572638', tokenSymbol:c.symbol });
-                      }}>
-                        <Text style={styles.transferText}>详情</Text>
-                      </TouchableOpacity>
-                      <TouchableOpacity
-                        style={[
-                          styles.transferBtn,
-                          (revokingSymbol === c.symbol || applyingSymbol === c.symbol) && { opacity: 0.6 },
-                        ]}
-                        disabled={revokingSymbol === c.symbol || applyingSymbol === c.symbol}
-                        onPress={() => {
-                          const approved = preAuthMap?.[c.symbol] === true;
-                          if (approved) {
-                            revokePreAuth(c.symbol);
-                          } else {
-                            applyPreAuth(c.symbol);
-                          }
-                        }}
-                      >
-                        {revokingSymbol === c.symbol || applyingSymbol === c.symbol ? (
-                          <ActivityIndicator size="small" color="#666" />
-                        ) : (
-                          <Text style={styles.transferText}>
-                            {preAuthMap?.[c.symbol] === true ? '撤销预授权' : '开通预授权'}
-                          </Text>
-                        )}
-                      </TouchableOpacity>
-                    </View>
-
-                  ))}
-                </View>
-
-              )}
+                return (
+                  <Image source={src} style={styles.cardImage} resizeMode="contain" />
+                );
+              })()}
+              <View style={styles.bankMid}>
+                <Text style={styles.cardName}>{(item as any).name} [{maskToken((item as any).token)}]</Text>
+                <Text style={styles.bankBalance}>
+                  {(() => {
+                    const coins = Array.isArray((item as any).coins) ? ((item as any).coins as { symbol: string; balance: string }[]) : [];
+                    const total = coins.reduce((sum, c) => sum + toNumber(c.balance), 0);
+                    return total.toFixed(2);
+                  })()}
+                </Text>
+              </View>
+              <View style={styles.bankRight}>
+                <TouchableOpacity
+                  style={styles.bankActionBtn}
+                  onPress={() => {
+                    Alert.alert('提示', '转账功能开发中');
+                  }}
+                >
+                  <Text style={styles.bankActionText}>转账</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={styles.bankActionBtn}
+                  onPress={() => navigation.navigate('OrderList', { userId: '03572638', tokenSymbol: '' })}
+                >
+                  <Text style={styles.bankActionText}>账单</Text>
+                </TouchableOpacity>
+              </View>
             </View>
-            {/* <TouchableOpacity style={styles.transferBtn} onPress={() => {
-              navigation.navigate('OrderList', { userId: '03572638',tokenSymbol:'' });
-            }}>
-              <Text style={styles.transferText}>详情</Text>
-            </TouchableOpacity> */}
-          </View>
+          )
         )}
       />
     </SafeAreaView>
@@ -245,13 +306,18 @@ const CardManageScreen = () => {
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#fff' },
-  header: { paddingHorizontal: 16, paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: '#eee' },
+  header: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingVertical: 8, backgroundColor: '#fff' },
   title: { fontSize: 16, fontWeight: '600' },
   list: { padding: 16 },
   loading: { paddingHorizontal: 16, paddingTop: 8, color: '#666', fontSize: 12 },
-  error: { paddingHorizontal: 16, paddingTop: 8, color: '#d32f2f', fontSize: 12 },
+  error: { paddingHorizontal: 16, paddingTop: 8, color: 'red', fontSize: 12 },
   empty: { paddingHorizontal: 16, paddingTop: 20 },
   emptyText: { color: '#999', fontSize: 13 },
+  tabBar: { flexDirection: 'row', paddingHorizontal: 16, paddingTop: 12, gap: 24 },
+  tabItem: { alignItems: 'center' },
+  tabText: { fontSize: 15, color: '#666' },
+  tabActiveText: { color: 'red', fontWeight: '600' },
+  tabUnderline: { marginTop: 6, height: 3, width: 80, backgroundColor: 'red', borderRadius: 3 },
   cardRow: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -270,20 +336,46 @@ const styles = StyleSheet.create({
   cardCenter: { flex: 1 },
   cardName: { fontSize: 15, color: '#222', fontWeight: '600' },
   addr: { marginTop: 6, fontSize: 12, color: '#555' },
-  stableRow: { flexDirection: 'row', gap: 6, marginTop: 6, flexWrap: 'wrap' },
-  stableChip: { borderWidth: 1, borderColor: '#ddd', borderRadius: 12, paddingHorizontal: 10, paddingVertical: 4, backgroundColor: '#fff' },
-  stableChipText: { fontSize: 12, color: '#333' },
-  transferBtn: {
-    paddingHorizontal: 16,
-    height: 32,
-    borderRadius: 16,
+  bankCardRow: { alignItems: 'stretch', paddingVertical: 16 },
+  bankMid: { flex: 1, justifyContent: 'center' },
+  bankBalance: { marginTop: 10, fontSize: 26, color: '#111', fontWeight: '800' },
+  bankRight: { width: 90, justifyContent: 'center', gap: 10 },
+  bankActionBtn: {
+    height: 36,
+    borderRadius: 18,
     backgroundColor: '#fff',
     borderWidth: 1,
-    borderColor: '#eee',
+    borderColor: '#E6E8EF',
     alignItems: 'center',
     justifyContent: 'center',
   },
-  transferText: { fontSize: 14, color: '#666' },
+  bankActionText: { fontSize: 14, color: '#333', fontWeight: '500' },
+  stableCardRow: { alignItems: 'stretch', paddingVertical: 16 },
+  stableLeft: { marginRight: 12, justifyContent: 'center' },
+  stableAvatar: { width: 44, height: 64, borderRadius: 14 },
+  stableMid: { flex: 1, paddingRight: 8 },
+  stableTopRow: { flexDirection: 'row', alignItems: 'center' },
+  stableAddress: { fontSize: 14, color: '#8A8F9B', fontWeight: '500' },
+  stableAssetRow: { flexDirection: 'row', alignItems: 'flex-end', marginTop: 6 },
+  stableAssetLabel: { fontSize: 14, color: '#333', marginRight: 10 },
+  stableAssetValue: { fontSize: 22, color: '#111', fontWeight: '700' },
+  stableCoinList: { marginTop: 10, gap: 8 },
+  stableCoinRow: { flexDirection: 'row', alignItems: 'center' },
+  stableCoinIcon: { width: 20, height: 20, borderRadius: 10, alignItems: 'center', justifyContent: 'center', marginRight: 8 },
+  stableCoinIconText: { color: '#fff', fontSize: 12, fontWeight: '700' },
+  stableCoinSymbol: { fontSize: 14, color: '#333', fontWeight: '600', marginRight: 5 },
+  stableCoinBalance: { fontSize: 14, color: '#333' },
+  stableRight: { width: 84, justifyContent: 'center', gap: 8 },
+  stableActionBtn: {
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: '#fff',
+    borderWidth: 1,
+    borderColor: '#E6E8EF',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  stableActionText: { fontSize: 14, color: '#333', fontWeight: '500' },
 });
 
 export default CardManageScreen;

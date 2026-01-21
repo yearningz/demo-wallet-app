@@ -4,15 +4,6 @@ import { SafeAreaView, View, FlatList,Text, StyleSheet, TouchableOpacity } from 
 import { QrScanScreenProps } from '../navigation/types';
 
 type Props = { navigation: QrScanScreenProps['navigation'] };
-const mockTokens = [
-  { symbol: 'BNB', price: '$586.16', change: '-0.18%' },
-  { symbol: 'METIS', price: '$13.7', change: '+0.46%' },
-  { symbol: 'USDT', price: '$0.99985', change: '+0.01%' },
-  { symbol: 'CRVUSD', price: '$0.99985', change: '+0.04%' },
-  { symbol: 'Cake', price: '$1.84', change: '-3.33%' },
-  { symbol: 'ETH', price: '$1,633.02', change: '+0.51%' },
-  { symbol: 'POL', price: '$0.18306', change: '-0.51%' },
-];
 const mockNews = [
   { title: '以太坊 Dencun 升级推进', source: 'Ethereum', time: '2 小时前' },
   { title: 'SEC 批准多支以太坊 ETF', source: 'SEC', time: '昨天' },
@@ -20,10 +11,6 @@ const mockNews = [
   { title: 'Solana 生态 DEX 交易量增长', source: 'DefiLlama', time: '本周' },
 ];
 const HomeScreen = ({ navigation }: Props) => {
-  const onScan = () => {
-    navigation.navigate('QrScan');
-  };
-
   return (
     <SafeAreaView style={styles.container}>
         <View style={styles.header}>

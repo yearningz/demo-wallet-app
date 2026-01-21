@@ -25,7 +25,7 @@ const formatTimestamp = (ts: any) => {
 };
 
 const TransactionDetailsScreen = ({ navigation, route }: TransactionDetailsScreenProps) => {
-  const { txn, address, stable, network, productPrice, gasFee, totalPay } = route.params;
+  const { txn } = route.params;
 
   return (
     <SafeAreaView style={styles.container}>

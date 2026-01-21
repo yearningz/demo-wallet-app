@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { SafeAreaView, View, Text, StyleSheet, FlatList, TouchableOpacity } from 'react-native';
 
 import { OrderListScreenProps } from '../navigation/types';
@@ -47,7 +47,7 @@ const OrderListScreen = ({ navigation, route }: OrderListScreenProps) => {
         setLoading(false);
       }
     })();
-  }, [userId]);
+  }, [userId, tokenSymbol]);
 
   const renderItem = ({ item }: { item: any }) => (
     <TouchableOpacity

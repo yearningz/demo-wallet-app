@@ -5,7 +5,9 @@ import { WebView } from 'react-native-webview';
 const MineScreen = () => {
   return (
     <SafeAreaView style={styles.container}>
-      <View style={styles.header}><Text style={styles.title}>我的</Text></View>
+        <View style={styles.header}>
+                        
+                        </View>
       <WebView
         source={{ uri: 'http://172.20.10.6:8088/app/profile/index.html' }}
         style={styles.webview}
@@ -20,8 +22,8 @@ const MineScreen = () => {
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#fff' },
-  header: { padding: 16, borderBottomWidth: 1, borderBottomColor: '#eee' },
-  title: { fontSize: 18, fontWeight: '600' },
+  header: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingVertical: 8, backgroundColor: '#fff' },
+  title: { fontSize: 18, fontWeight: '600', color: '#222' },
   body: { flex: 1, alignItems: 'center', justifyContent: 'center' },
   placeholder: { color: '#666' },
   webview: { flex: 1 },
