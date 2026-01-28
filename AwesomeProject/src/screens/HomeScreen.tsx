@@ -19,19 +19,19 @@ const HomeScreen = ({ navigation }: Props) => {
               <View style={styles.actionsRow}>
                   <TouchableOpacity style={styles.action} onPress={() => navigation.navigate('QrScan')}>
                   <View style={styles.actionIcon}><Text style={styles.iconText}>○</Text></View>
-                  <Text style={styles.actionLabel}>Scan</Text>
+                  <Text style={styles.actionLabel}>扫一扫</Text>
                 </TouchableOpacity>
                 <TouchableOpacity style={styles.action} onPress={() => navigation.navigate('SelectToken')}>
                   <View style={styles.actionIcon}><Text style={styles.iconText}>⬇</Text></View>
-                  <Text style={styles.actionLabel}>Send</Text>
+                  <Text style={styles.actionLabel}>发送</Text>
                 </TouchableOpacity>
                 <TouchableOpacity style={styles.action}>
                   <View style={styles.actionIcon}><Text style={styles.iconText}>⬆︎</Text></View>
-                  <Text style={styles.actionLabel}>Receive</Text>
+                  <Text style={styles.actionLabel}>接收</Text>
                 </TouchableOpacity>
                 <TouchableOpacity style={styles.action}>
                   <View style={styles.actionIcon}><Text style={styles.iconText}>⌛</Text></View>
-                  <Text style={styles.actionLabel}>History</Text>
+                  <Text style={styles.actionLabel}>历史记录</Text>
                 </TouchableOpacity>
               </View>
         
