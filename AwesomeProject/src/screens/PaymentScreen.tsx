@@ -81,6 +81,20 @@ const PaymentScreen = ({ navigation, route }: PaymentScreenProps) => {
     return upper;
   }, []);
 
+  const resolvePrimaryAccountNumber = useCallback(
+    (idsOverride?: string[]) => {
+      const ids = Array.isArray(idsOverride) ? idsOverride : [];
+      const id =
+        (ids.length > 0 ? String(ids[0]) : '') ||
+        (selectedCardId ? String(selectedCardId) : '') ||
+        (cards.length > 0 ? String(cards[0]?.id ?? '') : '');
+      const card = cards.find((c) => String(c?.id) === String(id)) ?? cards[0];
+      const cardToken = String(card?.cardToken ?? '');
+      return cardToken;
+    },
+    [cards, selectedCardId]
+  );
+
   const fetchBalance = useCallback(
     async (cardId: string, tokenSymbol: string) => {
       const key = balanceKey(cardId, tokenSymbol);
@@ -145,19 +159,20 @@ const PaymentScreen = ({ navigation, route }: PaymentScreenProps) => {
     return true;
   }, [fetchBalance, orderAmount, selectedCardId, selectedPayCardIds, selectingTokenSymbol]);
 
-  const buildTransferInfos = useCallback(() => {
-    const base = Array.isArray(selectedPayCardIds) ? selectedPayCardIds : [];
+  const buildTransferInfos = useCallback((idsOverride?: string[], amountOverride?: number) => {
+    const base = Array.isArray(idsOverride) ? idsOverride : Array.isArray(selectedPayCardIds) ? selectedPayCardIds : [];
     const ids = base.filter(Boolean);
     if (ids.length <= 1) return [];
     if (!selectingTokenSymbol) return [];
-    if (!orderAmount || !(orderAmount > 0)) return [];
+    const targetAmount = Number(amountOverride ?? orderAmount);
+    if (!targetAmount || !(targetAmount > 0)) return [];
 
     const formatAmount = (n: number) => {
       const s = Number.isFinite(n) ? n.toFixed(6) : '0.000000';
       return s.replace(/\.?0+$/, '');
     };
 
-    let remaining = orderAmount;
+    let remaining = targetAmount;
     const byChain: Record<string, number> = {};
     for (const id of ids) {
       if (!(remaining > 0)) break;
@@ -346,9 +361,14 @@ const PaymentScreen = ({ navigation, route }: PaymentScreenProps) => {
 
   const fetchTransFactor = useCallback(async () => {
     try {
+      const primaryAccountNumber = resolvePrimaryAccountNumber();
+      if (!primaryAccountNumber) {
+        setFactor(null);
+        return;
+      }
       setFactorLoading(true);
       setFactorError('');
-      const res = await fetch('http://172.20.10.6:8088/api/v1/posTransaction/queryTransFactor?primaryAccountNumber=625807******4153', {
+      const res = await fetch(`http://172.20.10.6:8088/api/v1/posTransaction/queryTransFactor?primaryAccountNumber=${encodeURIComponent(primaryAccountNumber)}`, {
         method: 'GET',
         headers: { 'Content-Type': 'application/json' },
       });
@@ -369,7 +389,7 @@ const PaymentScreen = ({ navigation, route }: PaymentScreenProps) => {
     } finally {
       setFactorLoading(false);
     }
-  }, []);
+  }, [resolvePrimaryAccountNumber]);
 
   const fetchGasCost = useCallback(async () => {
   try {
@@ -644,7 +664,7 @@ const PaymentScreen = ({ navigation, route }: PaymentScreenProps) => {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
-                      primaryAccountNumber: '625807******4153',
+                      primaryAccountNumber: resolvePrimaryAccountNumber(),
                       tokenSymbol: selectingTokenSymbol || '',
                       userId: '03572638',
                     }),
@@ -763,6 +783,7 @@ const PaymentScreen = ({ navigation, route }: PaymentScreenProps) => {
               onPress={() => {
                 const first = Array.isArray(selectedPayCardIds) ? selectedPayCardIds[0] : '';
                 if (first) setSelectedCardId(String(first));
+                setUseMultiAccountPayment(Array.isArray(selectedPayCardIds) && selectedPayCardIds.length > 1);
                 setSelectingCard(false);
                 setMultiSelectMode(false);
               }}
@@ -866,7 +887,7 @@ const PaymentScreen = ({ navigation, route }: PaymentScreenProps) => {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
-                      primaryAccountNumber: '625807******4153',
+                      primaryAccountNumber: resolvePrimaryAccountNumber(),
                       tokenSymbol: selectingTokenSymbol || preAuthInfo?.tokenSymbol || '',
                       userId: '03572638',
                     }),
@@ -986,11 +1007,48 @@ const PaymentScreen = ({ navigation, route }: PaymentScreenProps) => {
                     tid = setTimeout(() => ac?.abort(), 60000);
                     const isPreAuth = String(factor?.transactionType) === '预授权';
                     const usePreAuth = isPreAuth && preAuthInfo?.approved === true;
+                    const rawIds = (selectedPayCardIds.length > 0 ? selectedPayCardIds : selectedCardId ? [selectedCardId] : [])
+                      .filter(Boolean)
+                      .map(String);
+                    const ids = Array.from(new Set(rawIds));
+                    const tokenSymbol = String(selectingTokenSymbol ?? '');
+                    const txAmountValue = Number.isFinite(orderAmount) && orderAmount > 0 ? orderAmount : Number(factor?.transactionAmount ?? amount ?? 0);
+
+                    const getBalanceValue = async (id: string) => {
+                      const k = balanceKey(String(id), tokenSymbol);
+                      const cached = balanceByKey[k]?.value;
+                      if (Number.isFinite(cached)) return Number(cached);
+                      return fetchBalance(String(id), tokenSymbol);
+                    };
+
+                    let singleCoverId = '';
+                    if (tokenSymbol && txAmountValue > 0) {
+                      for (const id of ids) {
+                        const v = await getBalanceValue(String(id));
+                        if (v >= txAmountValue) {
+                          singleCoverId = String(id);
+                          break;
+                        }
+                      }
+                    }
+
+                    const finalIds = singleCoverId ? [singleCoverId] : ids;
+                    if (singleCoverId) {
+                      setSelectedPayCardIds([singleCoverId]);
+                      setUseMultiAccountPayment(false);
+                    }
+
+                    const useMultiChain =
+                      !usePreAuth && useMultiAccountPayment && finalIds.length > 1 && !singleCoverId && !!tokenSymbol && txAmountValue > 0;
+
+                    const primaryAccountNumber = resolvePrimaryAccountNumber(finalIds);
                     const url = usePreAuth
                       ? 'http://172.20.10.6:8088/api/v1/preAuth/preAuth'
-                      : 'http://172.20.10.6:8088/api/v1/posTransaction/QRcodeConsumeActiveScan';
-                    const ids = (selectedPayCardIds.length > 0 ? selectedPayCardIds : selectedCardId ? [selectedCardId] : []).filter(Boolean);
-                    const payAccounts = ids
+                      : useMultiChain
+                        ? 'http://172.20.10.6:8088/api/v1/posTransaction/QRcodeConsumeActiveScanMultiChain'
+                        : 'http://172.20.10.6:8088/api/v1/posTransaction/QRcodeConsumeActiveScan';
+
+                    const payAccounts = finalIds
                       .map((id) => {
                         const c = cards.find((x) => String(x?.id) === String(id));
                         if (!c) return null;
@@ -998,15 +1056,17 @@ const PaymentScreen = ({ navigation, route }: PaymentScreenProps) => {
                           cardToken: String((c as any).cardToken ?? ''),
                           userAddress: String((c as any).chainWalletAddress ?? ''),
                           chainType: resolveChainType(c),
-                          tokenSymbol: String(selectingTokenSymbol ?? ''),
+                          tokenSymbol,
                         };
                       })
                       .filter(Boolean);
+                    const transferInfos = useMultiChain ? buildTransferInfos(finalIds, txAmountValue) : [];
+                    const transactionAmount = String(factor?.transactionAmount ?? amount ?? txAmountValue);
                     const body = usePreAuth
                       ? {
-                        primaryAccountNumber: '625807******4153',
-                        transactionAmount: String(factor?.transactionAmount ?? amount ?? ''),
-                        tokenSymbol: selectingTokenSymbol ?? preAuthInfo?.tokenSymbol ?? '',
+                        primaryAccountNumber,
+                        transactionAmount,
+                        tokenSymbol: tokenSymbol || String(preAuthInfo?.tokenSymbol ?? ''),
                         terminalId: String(factor?.terminalId ?? ''),
                         merchantId: String(factor?.merchantId ?? ''),
                         referenceNumber: String(factor?.referenceNumber ?? ''),
@@ -1015,10 +1075,20 @@ const PaymentScreen = ({ navigation, route }: PaymentScreenProps) => {
                         permit2Address: String(preAuthInfo?.permit2Address ?? ''),
                         payAccounts,
                       }
-                      : {
-                        primaryAccountNumber: '625807******4153',
-                        transactionAmount: String(factor?.transactionAmount ?? amount ?? ''),
-                        tokenSymbol: selectingTokenSymbol ?? '',
+                      : useMultiChain
+                        ? {
+                          primaryAccountNumber,
+                          transactionAmount,
+                          tokenSymbol,
+                          terminalId: String(factor?.terminalId ?? ''),
+                          merchantId: String(factor?.merchantId ?? ''),
+                          referenceNumber: String(factor?.referenceNumber ?? ''),
+                          transferInfos,
+                        }
+                        : {
+                        primaryAccountNumber,
+                        transactionAmount,
+                        tokenSymbol,
                         terminalId: String(factor?.terminalId ?? ''),
                         merchantId: String(factor?.merchantId ?? ''),
                         referenceNumber: String(factor?.referenceNumber ?? ''),
