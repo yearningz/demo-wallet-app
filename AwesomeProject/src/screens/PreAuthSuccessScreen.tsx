@@ -20,8 +20,6 @@ const formatTimestamp = (ts: any) => {
 
 const PreAuthSuccessScreen = ({ navigation, route }: Props) => {
   const tokenSymbol = route?.params?.tokenSymbol ?? '';
-  const transactionAmount = route?.params?.transactionAmount ?? '';
-  const gasFee = route?.params?.gasFee ?? '';
   const txHash = route?.params?.txHash ?? '';
   const blockNumber = route?.params?.blockNumber ?? '';
   const timestamp = route?.params?.timestamp ?? '';

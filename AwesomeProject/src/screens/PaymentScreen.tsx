@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   View,
   Text,
@@ -9,42 +9,37 @@ import {
   ActivityIndicator,
   Alert,
   InteractionManager,
+  Keyboard,
+  ScrollView,
 } from 'react-native';
 
 import { PaymentScreenProps } from '../navigation/types';
-import { Keyboard } from 'react-native';
 
-
-const maskToken = (s: string) => {
-  if (!s) return '****';
-  const head = s.slice(0, 6);
-  const tail = s.slice(-4);
-  return `${head}****${tail}`;
-};
-
-const stableDefault: string[] = [];
+const API_BASE_URL = 'http://172.20.10.6:8088/api/v1';
 
 const PaymentScreen = ({ navigation, route }: PaymentScreenProps) => {
   const initialAmount = route?.params && (route.params as any).amount ? String((route.params as any).amount) : '';
-  const [amount, setAmount] = useState(initialAmount);
+  const amount = initialAmount;
   const [agreed, setAgreed] = useState(false);
-  const [successVisible, setSuccessVisible] = useState(false);
   const [selectedCardId, setSelectedCardId] = useState<string>('');
   const [selectingCard, setSelectingCard] = useState(false);
+  const [selectingToken, setSelectingToken] = useState(false);
+  const [tokenOptions, setTokenOptions] = useState<string[]>([]);
+  const [pendingCard, setPendingCard] = useState<any | null>(null);
   const [selectingTokenSymbol, setSelectingTokenSymbol] = useState('');
   const [cards, setCards] = useState<any[]>([]);
   const [cardsLoading, setCardsLoading] = useState(false);
   const [cardsError, setCardsError] = useState('');
-  const [selectedStable, setSelectedStable] = useState('');
-  const [stableOpen, setStableOpen] = useState(false);
-  const [stableOptions, setStableOptions] = useState<string[]>(stableDefault);
+  const [balanceInsufficientHint, setBalanceInsufficientHint] = useState(false);
+  const [multiSelectMode, setMultiSelectMode] = useState(false);
+  const [useMultiAccountPayment, setUseMultiAccountPayment] = useState(false);
+  const [selectedPayCardIds, setSelectedPayCardIds] = useState<string[]>([]);
+  const [balanceByKey, setBalanceByKey] = useState<Record<string, { value: number; raw: string; loading: boolean; error: string }>>({});
+  const balanceCheckKeyRef = useRef<string>('');
   const [gasFee, setGasFee] = useState('');
   const [productPrice, setProductPrice] = useState<number>(0);
   const [totalPay, setTotalPay] = useState<string>('');
   const [txn, setTxn] = useState<any | null>(null);
-  const [txnLoading, setTxnLoading] = useState(false);
-  const [txnError, setTxnError] = useState('');
-  const [detailsVisible, setDetailsVisible] = useState(false);
   const [factor, setFactor] = useState<any | null>(null);
   const [factorLoading, setFactorLoading] = useState(false);
   const [factorError, setFactorError] = useState('');
@@ -56,22 +51,135 @@ const PaymentScreen = ({ navigation, route }: PaymentScreenProps) => {
   const [preAuthSuccessVisible, setPreAuthSuccessVisible] = useState(false);
   const passwordInputRef = useRef<any>(null);
   const [lockSheets, setLockSheets] = useState(false);
-  const tokenSymbol = route?.params?.tokenSymbol;
-  const network = route?.params?.network;
   const to = (route?.params as any)?.to as string | undefined;
-  const memo = (route?.params as any)?.memo as string | undefined;
   const scanText = (route?.params as any)?.scanText as string | undefined;
   const [payPassword, setPayPassword] = useState('');
 // 支付状态：idle | paying | success | timeout
   const [payStatus, setPayStatus] = useState<'idle' | 'loading' | 'success' | 'timeout'>('idle');
 
-  const address = to ?? '';
-  const maskAddress = (addr: string) => {
-    if (!addr || addr.length <= 12) return addr;
-    const head = addr.slice(0, 6);
-    const tail = addr.slice(-6);
-    return `${head}******${tail}`;
-  };
+  const orderAmount = useMemo(() => {
+    const v1 = Number(factor?.transactionAmount);
+    if (Number.isFinite(v1) && v1 > 0) return v1;
+    const v2 = Number(productPrice);
+    if (Number.isFinite(v2) && v2 > 0) return v2;
+    const v3 = Number(amount);
+    if (Number.isFinite(v3) && v3 > 0) return v3;
+    return 0;
+  }, [factor?.transactionAmount, productPrice, amount]);
+
+  const balanceKey = useCallback((cardId: string, tokenSymbol: string) => `${cardId}|${tokenSymbol}`, []);
+
+  const resolveChainType = useCallback((card: any) => {
+    const chainId = Number(card?.chainId ?? card?.raw?.card?.chainId ?? card?.raw?.chain?.chainId);
+    if (chainId === 42161) return 'ARBITRUM';
+    if (chainId === 1) return 'ETHEREUM';
+    const chainName = String(card?.chainName ?? '');
+    if (!chainName) return 'ETHEREUM';
+    const upper = chainName.trim().toUpperCase().replace(/\s+/g, '_');
+    if (upper.includes('ARBITRUM')) return 'ARBITRUM';
+    if (upper.includes('ETH')) return 'ETHEREUM';
+    return upper;
+  }, []);
+
+  const fetchBalance = useCallback(
+    async (cardId: string, tokenSymbol: string) => {
+      const key = balanceKey(cardId, tokenSymbol);
+      const card = cards.find((c) => String(c?.id) === String(cardId));
+      if (!card?.chainWalletAddress) {
+        setBalanceByKey((prev) => ({
+          ...prev,
+          [key]: { value: 0, raw: '', loading: false, error: '缺少链上地址' },
+        }));
+        return 0;
+      }
+      try {
+        setBalanceByKey((prev) => ({
+          ...prev,
+          [key]: { value: prev?.[key]?.value ?? 0, raw: prev?.[key]?.raw ?? '', loading: true, error: '' },
+        }));
+        const res = await fetch(`${API_BASE_URL}/payment/getBalance`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            userAddress: String(card.chainWalletAddress),
+            chainType: resolveChainType(card),
+            tokenSymbol: String(tokenSymbol),
+          }),
+        });
+        const json = await res.json();
+        const raw = String(json?.balance ?? json?.data?.balance ?? '');
+        const value = Number(raw);
+        const normalizedValue = Number.isFinite(value) ? value : 0;
+        setBalanceByKey((prev) => ({
+          ...prev,
+          [key]: { value: normalizedValue, raw, loading: false, error: '' },
+        }));
+        return normalizedValue;
+      } catch (e: any) {
+        setBalanceByKey((prev) => ({
+          ...prev,
+          [key]: { value: prev?.[key]?.value ?? 0, raw: prev?.[key]?.raw ?? '', loading: false, error: String(e?.message || e) },
+        }));
+        return 0;
+      }
+    },
+    [balanceKey, cards, resolveChainType]
+  );
+
+  const ensureSufficientBalance = useCallback(async () => {
+    if (!selectingTokenSymbol) return false;
+    const base = Array.isArray(selectedPayCardIds) ? selectedPayCardIds : [];
+    const ids = (base.length > 0 ? base : selectedCardId ? [selectedCardId] : []).filter(Boolean);
+    if (ids.length === 0) return false;
+    const vals = await Promise.all(ids.map((id) => fetchBalance(String(id), String(selectingTokenSymbol))));
+    const total = vals.reduce((s, n) => s + (Number.isFinite(n) ? n : 0), 0);
+    if (orderAmount > 0 && total < orderAmount) {
+      setSelectedPayCardIds(ids);
+      setBalanceInsufficientHint(true);
+      setMultiSelectMode(true);
+      setUseMultiAccountPayment(false);
+      setSelectingCard(true);
+      return false;
+    }
+    setBalanceInsufficientHint(false);
+    return true;
+  }, [fetchBalance, orderAmount, selectedCardId, selectedPayCardIds, selectingTokenSymbol]);
+
+  const buildTransferInfos = useCallback(() => {
+    const base = Array.isArray(selectedPayCardIds) ? selectedPayCardIds : [];
+    const ids = base.filter(Boolean);
+    if (ids.length <= 1) return [];
+    if (!selectingTokenSymbol) return [];
+    if (!orderAmount || !(orderAmount > 0)) return [];
+
+    const formatAmount = (n: number) => {
+      const s = Number.isFinite(n) ? n.toFixed(6) : '0.000000';
+      return s.replace(/\.?0+$/, '');
+    };
+
+    let remaining = orderAmount;
+    const byChain: Record<string, number> = {};
+    for (const id of ids) {
+      if (!(remaining > 0)) break;
+      const card = cards.find((c) => String(c?.id) === String(id));
+      if (!card) continue;
+      const k = balanceKey(String(id), String(selectingTokenSymbol));
+      const bal = balanceByKey[k]?.value ?? 0;
+      const available = Number.isFinite(bal) ? bal : 0;
+      const take = Math.max(0, Math.min(available, remaining));
+      if (take <= 0) continue;
+      const chainType = resolveChainType(card);
+      byChain[chainType] = (byChain[chainType] ?? 0) + take;
+      remaining -= take;
+    }
+
+    return Object.keys(byChain).map((chainType) => ({
+      chainType,
+      tokenSymbol: String(selectingTokenSymbol),
+      amount: formatAmount(byChain[chainType]),
+    }));
+  }, [balanceByKey, balanceKey, cards, orderAmount, resolveChainType, selectedPayCardIds, selectingTokenSymbol]);
+
   const formatTimestamp = (ts: any) => {
     const n = Number(ts);
     if (!n || Number.isNaN(n)) return '-';
@@ -89,10 +197,8 @@ const PaymentScreen = ({ navigation, route }: PaymentScreenProps) => {
     if (!s) return null;
     const start = s.indexOf('{');
     const end = s.lastIndexOf('}');
-    console.warn('start', start, 'end', end);
     if (start >= 0 && end > start) {
       const jsonStr = s.slice(start, end + 1);
-      console.warn('jsonStr', jsonStr);
       try {
         const obj = JSON.parse(jsonStr);
         if (obj && typeof obj === 'object') return obj;
@@ -101,42 +207,108 @@ const PaymentScreen = ({ navigation, route }: PaymentScreenProps) => {
     return null;
   };
 
-  useEffect(() => {
-    console.warn('scanText', scanText);
-    (async () => {
-      try {
-        setCardsLoading(true);
-        setCardsError('');
-        const res = await fetch('http://172.20.10.6:8088/api/v1/posTransaction/queryCards?userId=03572638', {
-          method: 'GET',
-          headers: { 'Content-Type': 'application/json' },
+  const fetchAccountCardList = useCallback(async () => {
+    try {
+      setCardsLoading(true);
+      setCardsError('');
+      const res = await fetch(`http://172.20.10.6:8088/account/queryCardList`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          cardToken: null,
+          chainId: null,
+          chainWalletAddress: null,
+          nationalIdNo: null,
+          mobileNo: null,
+          page: { no: 1, size: 20 },
+        }),
+      });
+   
+      const json = await res.json();
+      const content = Array.isArray(json?.data?.content) ? json.data.content : [];
+      const mapped = content.map((it: any, idx: number) => {
+        const card = it?.card ?? {};
+        const chain = it?.chain ?? {};
+        const id = String(card?.id ?? card?.cardToken ?? idx);
+        const name = String(card?.userName ?? '账户');
+        const cardToken = String(card?.cardToken ?? '');
+        const chainId = Number(card?.chainId ?? chain?.chainId ?? 0);
+        const chainWalletAddress = String(card?.chainWalletAddress ?? '');
+        const tokens = Array.isArray(chain?.tokens) ? chain.tokens.map((t: any) => String(t)) : [];
+        const chainName = String(chain?.chainName ?? '');
+        return { id, name, cardToken, chainId, chainWalletAddress, tokens, chainName, raw: it };
+      });
+      setCards(mapped);
+      if (mapped.length > 0) {
+        const firstId = mapped[0].id;
+        setSelectedCardId((prev) => {
+          if (prev) return prev;
+          return firstId;
         });
-        const json = await res.json();
-        const data = Array.isArray(json?.data) ? json.data : [];
-        console.warn('data', data);
-        const mapped = data.map((c: any, idx: number) => ({
-          id: String(c?.id ?? idx),
-          name: c?.cardType === 'S' ? '稳定币账户' : (c?.issuingInstitution || '银行卡'),
-          pan: String(c?.primaryAccountNumber || ''),
-          type: c?.cardType === 'S' ? 'stable' : 'bank',
-          balances: c?.balanceInfos || [],
-        }));
-        setCards(mapped);
-        if (!selectedCardId && mapped.length > 0) {
-          setSelectedCardId(mapped[0].id);
-          setSelectingTokenSymbol(mapped[0].balances?.[0]?.tokenSymbol || '');
-        }
-      } catch (e: any) {
-        setCardsError(String(e?.message || e));
-      } finally {
-        setCardsLoading(false);
+        setSelectedPayCardIds((prev) => (prev.length > 0 ? prev : [firstId]));
       }
-    })();
+    } catch (e: any) {
+      setCardsError(String(e?.message || e));
+    } finally {
+      setCardsLoading(false);
+    }
   }, []);
 
   useEffect(() => {
+    fetchAccountCardList();
+  }, [fetchAccountCardList]);
+
+  useEffect(() => {
+    if (selectingCard) {
+      fetchAccountCardList();
+    }
+  }, [selectingCard, fetchAccountCardList]);
+
+  useEffect(() => {
+    if (!scanText) return;
+    if (cards.length === 0) return;
+
+    const firstCard = cards[0];
+    const firstCardId = String((firstCard as any)?.id ?? '');
+    const firstToken = Array.isArray((firstCard as any)?.tokens) ? String((firstCard as any).tokens[0] ?? '') : '';
+
+    setSelectedCardId((prev) => prev || firstCardId);
+    setSelectingTokenSymbol((prev) => prev || firstToken);
+    setSelectedPayCardIds((prev) => (prev.length > 0 ? prev : [firstCardId]));
+    setUseMultiAccountPayment(false);
+  }, [scanText, cards]);
+
+  useEffect(() => {
+    if (!scanText) return;
+    if (!selectedCardId || !selectingTokenSymbol) return;
+    if (!orderAmount || !(orderAmount > 0)) return;
+    const base = Array.isArray(selectedPayCardIds) ? selectedPayCardIds : [];
+    const ids = (base.length > 0 ? base : [selectedCardId]).filter(Boolean);
+    const k = `${ids.join(',')}|${selectingTokenSymbol}|${String(orderAmount)}`;
+    if (balanceCheckKeyRef.current === k) return;
+    balanceCheckKeyRef.current = k;
+    (async () => {
+      const vals = await Promise.all(ids.map((id) => fetchBalance(String(id), String(selectingTokenSymbol))));
+      const total = vals.reduce((s, n) => s + (Number.isFinite(n) ? n : 0), 0);
+      setBalanceInsufficientHint(total < orderAmount);
+    })();
+  }, [fetchBalance, orderAmount, scanText, selectedCardId, selectedPayCardIds, selectingTokenSymbol]);
+
+  useEffect(() => {
+    if (!selectingTokenSymbol) return;
+    if (!orderAmount || !(orderAmount > 0)) return;
+    const base = Array.isArray(selectedPayCardIds) ? selectedPayCardIds : [];
+    if (base.length === 0) return;
+    const ids = base.filter(Boolean);
+    (async () => {
+      const vals = await Promise.all(ids.map((id) => fetchBalance(String(id), String(selectingTokenSymbol))));
+      const total = vals.reduce((s, n) => s + (Number.isFinite(n) ? n : 0), 0);
+      setBalanceInsufficientHint(total < orderAmount);
+    })();
+  }, [fetchBalance, orderAmount, selectedPayCardIds, selectingTokenSymbol]);
+
+  useEffect(() => {
     const obj = parseScanText(scanText);
-    console.warn('obj', obj);
     if (obj && typeof obj === 'object') {
       setFactor((prev: any) => ({
         ...(prev || {}),
@@ -185,8 +357,6 @@ const PaymentScreen = ({ navigation, route }: PaymentScreenProps) => {
       if (list.length === 0) {
         // 防御：接口正常但无数据
         setFactor(null);
-        setStableOptions([]);
-        setSelectedStable('');
         return;
       }
       const first = list[0];
@@ -194,15 +364,12 @@ const PaymentScreen = ({ navigation, route }: PaymentScreenProps) => {
         ...(prev || {}),
         ...first,
       }));
-      // setGasFee(data?.gasCost != null ? String(data.gasCost) : '');
-      setProductPrice(prev => prev); // 交易金额仍来自 scanText
-      // setTotalPay(prev => prev);
     } catch (e: any) {
       setFactorError(String(e?.message || e));
     } finally {
       setFactorLoading(false);
     }
-  }, [scanText]);
+  }, []);
 
   const fetchGasCost = useCallback(async () => {
   try {
@@ -256,7 +423,7 @@ const PaymentScreen = ({ navigation, route }: PaymentScreenProps) => {
 
   return (
     <View style={styles.overlay}>
-      {!lockSheets && !showPasswordScreen && !successVisible && !selectingCard && !preAuthSheetVisible && !preAuthSuccessVisible && (
+      {!lockSheets && !showPasswordScreen && !selectingCard && !preAuthSheetVisible && !preAuthSuccessVisible && (
         <View style={styles.sheet}>
           <View style={styles.handle} />
 
@@ -271,6 +438,9 @@ const PaymentScreen = ({ navigation, route }: PaymentScreenProps) => {
 
           {factorLoading && <Text style={styles.sectionDesc}>正在获取交易要素…</Text>}
           {!!factorError && <Text style={styles.sectionDesc}>错误：{factorError}</Text>}
+          {cardsLoading && <Text style={styles.sectionDesc}>正在获取账户列表…</Text>}
+          {!!cardsError && <Text style={styles.sectionDesc}>错误：{cardsError}</Text>}
+          {!!preAuthError && <Text style={styles.sectionDesc}>错误：{preAuthError}</Text>}
 
           {/* <View style={styles.amountBlock}>
           <Text style={styles.currency}>$</Text>
@@ -282,7 +452,7 @@ const PaymentScreen = ({ navigation, route }: PaymentScreenProps) => {
             <View style={styles.sectionRow}><Text style={styles.sectionTitle}>终端号</Text><Text style={styles.sectionValue}>{factor?.terminalId ?? '-'}</Text></View>
             {/* <View style={styles.sectionRow}><Text style={styles.sectionTitle}>交易金额</Text><Text style={styles.sectionValue}>{factor?.transactionAmount != null ? `$${String(factor?.transactionAmount)}` : '-'}</Text></View> */}
             <View style={styles.sectionRow}><Text style={styles.sectionTitle}>订单号</Text><Text style={styles.sectionValue}>{factor?.referenceNumber ?? '-'}</Text></View>
-            {factor?.transactionType != '预授权' ? (
+            {factor?.transactionType !== '预授权' ? (
               <View style={styles.sectionRow}><Text style={styles.sectionTitle}>商品价格</Text><Text style={styles.sectionValue}>{productPrice ? `$${productPrice}` : ''}</Text></View>
             ) :   <View style={styles.sectionRow}><Text style={styles.sectionTitle}>授权金额</Text><Text style={styles.sectionValue}>{productPrice ? `$${productPrice}` : ''}</Text></View>}
           
@@ -337,7 +507,13 @@ const PaymentScreen = ({ navigation, route }: PaymentScreenProps) => {
           <Text style={styles.sectionValue}>以太网</Text>
         </View>
 
-          <TouchableOpacity style={styles.sectionRow} onPress={() => setSelectingCard(true)}>
+          <TouchableOpacity
+            style={styles.sectionRow}
+            onPress={() => {
+              setMultiSelectMode(balanceInsufficientHint);
+              setSelectingCard(true);
+            }}
+          >
             <Text style={styles.sectionTitle}>支付方式</Text>
             <View style={styles.payMethodRight}>
               <Text
@@ -346,12 +522,18 @@ const PaymentScreen = ({ navigation, route }: PaymentScreenProps) => {
                 ellipsizeMode="tail"
               >
                 {(() => {
+                  const n = Array.isArray(selectedPayCardIds) && selectedPayCardIds.length > 0 ? selectedPayCardIds.length : selectedCardId ? 1 : 0;
+                  if (n > 1) return `已选${n}个账户`;
                   const c = cards.find((x) => x.id === selectedCardId);
-                  return `${c?.name ?? '银行卡'} [${maskToken(c?.pan || '')}]`;
+                  return `${c?.name ?? '账户'} [${String(c?.cardToken ?? '')}]`;
                 })()}
               </Text>
             </View>
           </TouchableOpacity>
+
+          {balanceInsufficientHint && (
+            <Text style={[styles.sectionDesc, { marginTop: 8 }]}>余额不足，点击“支付方式”可多选账户</Text>
+          )}
 
           {(selectingTokenSymbol) && (
             <View style={styles.sectionRow}>
@@ -387,6 +569,14 @@ const PaymentScreen = ({ navigation, route }: PaymentScreenProps) => {
           <TouchableOpacity
             disabled={!agreed}
             onPress={() => {
+              (async () => {
+                if (!selectingTokenSymbol) {
+                  Alert.alert('提示', '请选择币种');
+                  setSelectingCard(true);
+                  return;
+                }
+                const ok = await ensureSufficientBalance();
+                if (!ok) return;
               // setSuccessVisible(true);
               // setTxnLoading(true);
               // setTxnError('');
@@ -472,6 +662,7 @@ const PaymentScreen = ({ navigation, route }: PaymentScreenProps) => {
                   setPreAuthLoading(false);
                 }
               })();
+              })();
             }}
             style={[styles.payBtn, !agreed && styles.payBtnDisabled]}
           >
@@ -479,53 +670,164 @@ const PaymentScreen = ({ navigation, route }: PaymentScreenProps) => {
           </TouchableOpacity>
         </View>
       )}
-      {!lockSheets && !successVisible && selectingCard && !preAuthSheetVisible && !preAuthSuccessVisible && (
+      {!lockSheets && selectingCard && !selectingToken && !preAuthSheetVisible && !preAuthSuccessVisible && (
         <View style={styles.sheet}>
           <View style={styles.handle} />
 
           <View style={styles.headerRow}>
-            <TouchableOpacity onPress={() => setSelectingCard(false)} style={styles.closeBtn}>
+            <TouchableOpacity
+              onPress={() => {
+                setSelectingCard(false);
+                setMultiSelectMode(false);
+              }}
+              style={styles.closeBtn}
+            >
               <Text style={styles.closeText}>←</Text>
             </TouchableOpacity>
-            <Text style={styles.sheetTitle}>选择付款方式</Text>
+            <Text style={styles.sheetTitle}>{multiSelectMode ? '选择付款方式（可多选）' : '选择付款方式'}</Text>
+          </View>
+
+          <ScrollView style={styles.cardListLimited} contentContainerStyle={styles.cardListContent} showsVerticalScrollIndicator>
+            {cardsLoading && (
+              <View style={styles.stretchMarginTop8}>
+                <ActivityIndicator />
+              </View>
+            )}
+            {!!cardsError && <Text style={styles.sectionDesc}>错误：{cardsError}</Text>}
+            {(multiSelectMode && selectingTokenSymbol ? cards.filter((c) => Array.isArray((c as any).tokens) && (c as any).tokens.includes(selectingTokenSymbol)) : cards).map((c) => {
+              const id = String((c as any).id);
+              const checked = Array.isArray(selectedPayCardIds) && selectedPayCardIds.includes(id);
+              const k = balanceKey(id, String(selectingTokenSymbol));
+              const b = balanceByKey[k];
+              const rightText = !selectingTokenSymbol
+                ? ''
+                : b?.loading
+                  ? '查询中…'
+                  : b?.error
+                    ? '查询失败'
+                    : b?.raw
+                      ? String(b.raw)
+                      : '';
+              return (
+                <TouchableOpacity
+                  key={id}
+                  style={styles.cardItem}
+                  onPress={() => {
+                    if (multiSelectMode && selectingTokenSymbol) {
+                      setSelectedPayCardIds((prev) => {
+                        const base = Array.isArray(prev) ? prev : [];
+                        const has = base.includes(id);
+                        const next = has ? base.filter((x) => x !== id) : [...base, id];
+                        if (!has) {
+                          fetchBalance(id, String(selectingTokenSymbol));
+                        }
+                        return next;
+                      });
+                      setSelectedCardId((prev) => prev || id);
+                      return;
+                    }
+                    setPendingCard(c);
+                    setTokenOptions(Array.isArray((c as any).tokens) ? (c as any).tokens : []);
+                    setSelectingToken(true);
+                  }}
+                >
+                  {multiSelectMode && selectingTokenSymbol ? (
+                    <View style={[styles.checkbox, checked && styles.checkboxChecked]}>
+                      {checked ? <Text style={styles.checkboxTick}>✓</Text> : null}
+                    </View>
+                  ) : (
+                    <View style={styles.cardThumb} />
+                  )}
+                  <View style={[styles.cardMiddle, multiSelectMode && selectingTokenSymbol ? { marginLeft: 12 } : null]}>
+                    <Text style={styles.cardName}>{String((c as any).name)} [{String((c as any).cardToken ?? '')}]</Text>
+                    <Text style={styles.cardBalance}>{String((c as any).chainWalletAddress ?? '')}</Text>
+                  </View>
+                  {multiSelectMode && selectingTokenSymbol ? (
+                    <View style={{ width: 96, alignItems: 'flex-end' }}>
+                      <Text style={styles.cardBalance}>{rightText || '-'}</Text>
+                    </View>
+                  ) : selectedCardId === c.id ? (
+                    <Text style={styles.selectedBadge}>✓</Text>
+                  ) : (
+                    <View style={styles.unselectedDot} />
+                  )}
+                </TouchableOpacity>
+              );
+            })}
+          </ScrollView>
+
+          {multiSelectMode && selectingTokenSymbol && (
+            <TouchableOpacity
+              style={[styles.payBtn, (!Array.isArray(selectedPayCardIds) || selectedPayCardIds.length === 0) && styles.payBtnDisabled]}
+              disabled={!Array.isArray(selectedPayCardIds) || selectedPayCardIds.length === 0}
+              onPress={() => {
+                const first = Array.isArray(selectedPayCardIds) ? selectedPayCardIds[0] : '';
+                if (first) setSelectedCardId(String(first));
+                setSelectingCard(false);
+                setMultiSelectMode(false);
+              }}
+            >
+              <Text style={styles.payBtnText}>确定</Text>
+            </TouchableOpacity>
+          )}
+        </View>
+      )}
+      {!lockSheets && selectingCard && selectingToken && !preAuthSheetVisible && !preAuthSuccessVisible && (
+        <View style={styles.sheet}>
+          <View style={styles.handle} />
+
+          <View style={styles.headerRow}>
+            <TouchableOpacity
+              onPress={() => {
+                setSelectingToken(false);
+                setPendingCard(null);
+                setTokenOptions([]);
+              }}
+              style={styles.closeBtn}
+            >
+              <Text style={styles.closeText}>←</Text>
+            </TouchableOpacity>
+            <Text style={styles.sheetTitle}>选择币种</Text>
           </View>
 
           <View style={styles.cardList}>
-            {cards.map((c) => (
-              <TouchableOpacity
-                key={c.id}
-                style={styles.cardItem}
-                onPress={() => {
-                  setSelectedCardId(c.id);
-                  setSelectingTokenSymbol(c.balances?.[0]?.tokenSymbol || '');
-                  setSelectingCard(false);
-                }}
-              >
-                <View style={styles.cardThumb} />
-                <View style={styles.cardMiddle}>
-                  <Text style={styles.cardName}>{(c as any).name} [{maskToken((c as any).pan)}]</Text>
-                  {/* 显示余额信息 */}
-                  {c.balances.length > 0 ? (
-                    c.balances.map((balanceInfo: any, idx: number) => (
-                      <Text key={idx} style={styles.cardBalance}>
-                        {balanceInfo.tokenSymbol}: {balanceInfo.balance}
-                      </Text>
-                    ))
+            {tokenOptions.length === 0 ? (
+              <Text style={styles.sectionDesc}>暂无可选币种</Text>
+            ) : (
+              tokenOptions.map((sym) => (
+                <TouchableOpacity
+                  key={sym}
+                  style={styles.cardItem}
+                  onPress={() => {
+                    if (pendingCard) {
+                      const id = String((pendingCard as any).id);
+                      setSelectedCardId(id);
+                      setSelectedPayCardIds([id]);
+                    }
+                    setSelectingTokenSymbol(String(sym));
+                    setUseMultiAccountPayment(false);
+                    setSelectingToken(false);
+                    setPendingCard(null);
+                    setTokenOptions([]);
+                    setSelectingCard(false);
+                  }}
+                >
+                  <View style={styles.cardThumb} />
+                  <View style={styles.cardMiddle}>
+                    <Text style={styles.cardName}>{sym}</Text>
+                  </View>
+                  {selectingTokenSymbol === sym ? (
+                    <Text style={styles.selectedBadge}>✓</Text>
                   ) : (
-                    <Text style={styles.cardBalance}>无余额信息</Text>
+                    <View style={styles.unselectedDot} />
                   )}
-                </View>
-                {selectedCardId === c.id ? (
-                  <Text style={styles.selectedBadge}>✓</Text>
-                ) : (
-                  <View style={styles.unselectedDot} />
-                )}
-              </TouchableOpacity>
-            ))}
+                </TouchableOpacity>
+              ))
+            )}
           </View>
         </View>
       )}
-      {!successVisible && preAuthSheetVisible && !preAuthSuccessVisible && (
+      {preAuthSheetVisible && !preAuthSuccessVisible && (
         <View style={styles.sheet}>
           <View style={styles.handle} />
           <View style={styles.headerRow}>
@@ -534,7 +836,8 @@ const PaymentScreen = ({ navigation, route }: PaymentScreenProps) => {
             </TouchableOpacity>
             <Text style={styles.sheetTitle}>预授权</Text>
           </View>
-          <View style={{ alignSelf: 'stretch', marginTop: 8 }}>
+          {!!preAuthError && <Text style={styles.sectionDesc}>错误：{preAuthError}</Text>}
+          <View style={styles.stretchMarginTop8}>
             <View style={[styles.sectionRow, styles.sectionRowWrap]}>
               <Text style={styles.sectionTitle}>付款人地址</Text>
               <Text style={styles.sectionValue}>{preAuthInfo?.payerAddress ?? '-'}</Text>
@@ -554,7 +857,7 @@ const PaymentScreen = ({ navigation, route }: PaymentScreenProps) => {
           </View>
           <TouchableOpacity
             disabled={preAuthLoading}
-            style={[styles.payBtn, preAuthLoading && { opacity: 0.6 }]}
+            style={[styles.payBtn, preAuthLoading && styles.payBtnLoading]}
             onPress={() => {
               (async () => {
                 try {
@@ -588,7 +891,7 @@ const PaymentScreen = ({ navigation, route }: PaymentScreenProps) => {
           </TouchableOpacity>
         </View>
       )}
-      {!lockSheets && !successVisible && preAuthSuccessVisible && (
+      {!lockSheets && preAuthSuccessVisible && (
         <View style={styles.sheet}>
           <View style={styles.handle} />
           <View style={styles.headerRow}>
@@ -597,7 +900,7 @@ const PaymentScreen = ({ navigation, route }: PaymentScreenProps) => {
             </TouchableOpacity>
             <Text style={styles.sheetTitle}>预授权已开通</Text>
           </View>
-          <View style={{ alignSelf: 'stretch', marginTop: 8 }}>  
+          <View style={styles.stretchMarginTop8}>  
             <View style={styles.sectionRow}>
               <Text style={styles.sectionTitle}>链上交易哈希</Text>
               <Text style={styles.sectionValue}>{preAuthInfo?.txHash ?? '-'}</Text>
@@ -612,7 +915,7 @@ const PaymentScreen = ({ navigation, route }: PaymentScreenProps) => {
             </View>
           </View>
           <TouchableOpacity
-            style={[styles.payBtn, { marginTop: 30, alignSelf: 'stretch' }]}
+            style={[styles.payBtn, styles.fullWidthBtn]}
             onPress={() => {
               setPreAuthSuccessVisible(false);
               setShowPasswordScreen(true);
@@ -667,101 +970,91 @@ const PaymentScreen = ({ navigation, route }: PaymentScreenProps) => {
 
           <TouchableOpacity
             onPress={() => {
-              // Handle payment processing
-              console.log('Payment Confirmed');
-              // After payment confirmation, you can proceed to success page or reset
-              Keyboard.dismiss();              // ✅ 1. 收起键盘
-              //setShowPasswordScreen(false);    // ✅ 2. 关闭密码页
-              //setSuccessVisible(true);
-              setPayStatus('loading');
-              //setTxnLoading(true);
-              setTxnError('');
               (async () => {
-                let ac: AbortController | undefined;
-                let tid: any;
-                try {
-                  ac = new AbortController();
-                  tid = setTimeout(() => ac?.abort(), 60000);
-                  const isPreAuth = String(factor?.transactionType) === '预授权';
-                  const usePreAuth = isPreAuth && preAuthInfo?.approved === true;
-                  const url = usePreAuth
-                    ? 'http://172.20.10.6:8088/api/v1/preAuth/preAuth'
-                    : 'http://172.20.10.6:8088/api/v1/posTransaction/QRcodeConsumeActiveScan';
-                  const body = usePreAuth
-                    ? {
-                      primaryAccountNumber: '625807******4153',
-                      transactionAmount: String(factor?.transactionAmount ?? amount ?? ''),
-                      tokenSymbol: selectingTokenSymbol ?? preAuthInfo?.tokenSymbol ?? '',
-                      terminalId: String(factor?.terminalId ?? ''),
-                      merchantId: String(factor?.merchantId ?? ''),
-                      referenceNumber: String(factor?.referenceNumber ?? ''),
-                      payerAddress: String(preAuthInfo?.payerAddress ?? ''),
-                      tokenAddress: String(preAuthInfo?.tokenAddress ?? ''),
-                      permit2Address: String(preAuthInfo?.permit2Address ?? ''),
-                    }
-                    : {
-                      primaryAccountNumber: '625807******4153',
-                      transactionAmount: String(factor?.transactionAmount ?? amount ?? ''),
-                      tokenSymbol: selectingTokenSymbol ?? '',
-                      terminalId: String(factor?.terminalId ?? ''),
-                      merchantId: String(factor?.merchantId ?? ''),
-                      referenceNumber: String(factor?.referenceNumber ?? ''),
-                    };
-                  const res = await fetch(url, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(body),
-                    signal: ac.signal,
-                  });
-                  const json = await res.json();
-                  console.warn('json', json);
-                  const d = json?.data ?? {};
-                  if (json?.statusCode === '00') {
-                    const mapped = {
-                      txHash: String(d?.txHash ?? ''),
-                      status: String(d?.status ?? ''),
-                      blockNumber: String(d?.blockNumber ?? ''),
-                      timestamp: String(d?.timestamp ?? ''),
-                      merchantId: String(d?.merchantId ?? ''),
-                      terminalId: String(d?.terminalId ?? ''),
-                      referenceNumber: String(d?.referenceNumber ?? ''),
-                      transactionAmount: String(d?.transactionAmount ?? ''),
-                      totalPay: String((Number(d?.transactionAmount ?? 0) + Number(d?.gasCost ?? 0))),
-                    } as any;
-                    setTxn(mapped);
-                    setPayStatus('success');
-                  } else {
-                    setPayStatus('timeout');
-                  }
-                  // const mapped = {
-                  //   txHash: String(d?.txHash ?? ''),
-                  //   status: String(d?.status ?? ''),
-                  //   blockNumber: String(d?.blockNumber ?? ''),
-                  //   timestamp: String(d?.timestamp ?? ''),
-                  //   fromAddress: String(d?.fromAddress ?? ''),
-                  //   toAddress: String(d?.toAddress ?? ''),
-                  //   gasUsed: String(d?.gasUsed ?? ''),
-                  //   gasPrice: String(d?.gasPrice ?? ''),
-                  //   gasCost: String(d?.gasCost ?? ''),
-                  //   inputData: String(d?.inputData ?? ''),
-                  //   functionName: String(d?.functionName ?? ''),
-                  //   events: Array.isArray(d?.events) ? d.events : [],
-                  //   tokenTransfers: Array.isArray(d?.tokenTransfers) ? d.tokenTransfers : [],
-                  //   merchantId: String(d?.merchantId ?? ''),
-                  //   terminalId: String(d?.terminalId ?? ''),
-                  //   referenceNumber: String(d?.referenceNumber ?? ''),
-                  //   transactionAmount: String(d?.transactionAmount ?? ''),
-                  //   statusCode: String(json?.statusCode ?? ''),
-                  //   msg: String(json?.msg ?? ''),
-                  //   totalPay: String((Number(d?.transactionAmount ?? 0) + Number(d?.gasCost ?? 0))),
-                  // } as any;
-                  // setTxn(mapped);
-                } catch (e: any) {
-                  setTxnError(String(e?.message || e));
-                  setPayStatus('timeout');
-                } finally {
-                  if (tid) clearTimeout(tid);
+                const ok = await ensureSufficientBalance();
+                if (!ok) {
+                  setShowPasswordScreen(false);
+                  return;
                 }
+                Keyboard.dismiss();
+                setPayStatus('loading');
+                (async () => {
+                  let ac: AbortController | undefined;
+                  let tid: any;
+                  try {
+                    ac = new AbortController();
+                    tid = setTimeout(() => ac?.abort(), 60000);
+                    const isPreAuth = String(factor?.transactionType) === '预授权';
+                    const usePreAuth = isPreAuth && preAuthInfo?.approved === true;
+                    const url = usePreAuth
+                      ? 'http://172.20.10.6:8088/api/v1/preAuth/preAuth'
+                      : 'http://172.20.10.6:8088/api/v1/posTransaction/QRcodeConsumeActiveScan';
+                    const ids = (selectedPayCardIds.length > 0 ? selectedPayCardIds : selectedCardId ? [selectedCardId] : []).filter(Boolean);
+                    const payAccounts = ids
+                      .map((id) => {
+                        const c = cards.find((x) => String(x?.id) === String(id));
+                        if (!c) return null;
+                        return {
+                          cardToken: String((c as any).cardToken ?? ''),
+                          userAddress: String((c as any).chainWalletAddress ?? ''),
+                          chainType: resolveChainType(c),
+                          tokenSymbol: String(selectingTokenSymbol ?? ''),
+                        };
+                      })
+                      .filter(Boolean);
+                    const body = usePreAuth
+                      ? {
+                        primaryAccountNumber: '625807******4153',
+                        transactionAmount: String(factor?.transactionAmount ?? amount ?? ''),
+                        tokenSymbol: selectingTokenSymbol ?? preAuthInfo?.tokenSymbol ?? '',
+                        terminalId: String(factor?.terminalId ?? ''),
+                        merchantId: String(factor?.merchantId ?? ''),
+                        referenceNumber: String(factor?.referenceNumber ?? ''),
+                        payerAddress: String(preAuthInfo?.payerAddress ?? ''),
+                        tokenAddress: String(preAuthInfo?.tokenAddress ?? ''),
+                        permit2Address: String(preAuthInfo?.permit2Address ?? ''),
+                        payAccounts,
+                      }
+                      : {
+                        primaryAccountNumber: '625807******4153',
+                        transactionAmount: String(factor?.transactionAmount ?? amount ?? ''),
+                        tokenSymbol: selectingTokenSymbol ?? '',
+                        terminalId: String(factor?.terminalId ?? ''),
+                        merchantId: String(factor?.merchantId ?? ''),
+                        referenceNumber: String(factor?.referenceNumber ?? ''),
+                        payAccounts,
+                      };
+                    const res = await fetch(url, {
+                      method: 'POST',
+                      headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify(body),
+                      signal: ac.signal,
+                    });
+                    const json = await res.json();
+                    const d = json?.data ?? {};
+                    if (json?.statusCode === '00') {
+                      const mapped = {
+                        txHash: String(d?.txHash ?? ''),
+                        status: String(d?.status ?? ''),
+                        blockNumber: String(d?.blockNumber ?? ''),
+                        timestamp: String(d?.timestamp ?? ''),
+                        merchantId: String(d?.merchantId ?? ''),
+                        terminalId: String(d?.terminalId ?? ''),
+                        referenceNumber: String(d?.referenceNumber ?? ''),
+                        transactionAmount: String(d?.transactionAmount ?? ''),
+                        totalPay: String((Number(d?.transactionAmount ?? 0) + Number(d?.gasCost ?? 0))),
+                      } as any;
+                      setTxn(mapped);
+                      setPayStatus('success');
+                    } else {
+                      setPayStatus('timeout');
+                    }
+                  } catch {
+                    setPayStatus('timeout');
+                  } finally {
+                    if (tid) clearTimeout(tid);
+                  }
+                })();
               })();
             }}
             style={styles.payBtn}
@@ -913,6 +1206,9 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(0,0,0,0.5)',
     justifyContent: 'flex-end',
   },
+  stretchMarginTop8: { alignSelf: 'stretch', marginTop: 8 },
+  fullWidthBtn: { marginTop: 30, alignSelf: 'stretch' },
+  payBtnLoading: { opacity: 0.6 },
   sheet: {
     backgroundColor: '#fff',
     borderTopLeftRadius: 16,
@@ -1053,6 +1349,8 @@ const styles = StyleSheet.create({
     zIndex: 1,
   },
 
+  cardListLimited: { maxHeight: 576 },
+  cardListContent: { paddingTop: 8 },
   cardList: { marginTop: 8 },
   cardItem: {
     flexDirection: 'row',
