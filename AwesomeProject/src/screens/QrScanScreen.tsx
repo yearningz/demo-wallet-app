@@ -83,7 +83,7 @@ const QrScanScreen = ({ navigation }: QrScanScreenProps) => {
 };
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#fff' },
+  container: { flex: 1, backgroundColor: '#fff', paddingTop: 20 },
   header: { padding: 12, backgroundColor: '#fff', flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
   title: { color: '#fff', fontSize: 18, fontWeight: '600' },
   backBtn: { width: 32, height: 32, borderRadius: 16, alignItems: 'center', justifyContent: 'center' },

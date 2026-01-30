@@ -67,7 +67,7 @@ const HomeScreen = ({ navigation }: Props) => {
 
 const red = '#b71c1c';
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#fff' },
+  container: { flex: 1, backgroundColor: '#fff',paddingTop: 20},
   header: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, paddingVertical: 8, backgroundColor: '#fff' },
   city: { color: '#fff', fontSize: 14 },
   search: { color: '#fff', fontSize: 14 },

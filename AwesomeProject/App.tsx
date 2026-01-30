@@ -92,7 +92,7 @@ function App() {
     <NavigationContainer>
       <Stack.Navigator
         initialRouteName="MainTabs"
-        screenOptions={{ headerShown: false, contentStyle: { paddingTop: 20, backgroundColor: '#fff' } }}
+        screenOptions={{ headerShown: false, }}
       >
         <Stack.Screen name="MainTabs" component={MainTabs} />
         <Stack.Screen name="Assets" component={AssetsScreen} />

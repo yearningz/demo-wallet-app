@@ -17,6 +17,13 @@ import { PaymentScreenProps } from '../navigation/types';
 
 const API_BASE_URL = 'http://172.20.10.6:8088/api/v1';
 
+const maskCardToken = (token: string) => {
+  if (!token || token.length <= 10) return token;
+  const head = token.slice(0, 6);
+  const tail = token.slice(-4);
+  return `${head}****${tail}`;
+};
+
 const PaymentScreen = ({ navigation, route }: PaymentScreenProps) => {
   const initialAmount = route?.params && (route.params as any).amount ? String((route.params as any).amount) : '';
   const amount = initialAmount;
@@ -68,6 +75,70 @@ const PaymentScreen = ({ navigation, route }: PaymentScreenProps) => {
   }, [factor?.transactionAmount, productPrice, amount]);
 
   const balanceKey = useCallback((cardId: string, tokenSymbol: string) => `${cardId}|${tokenSymbol}`, []);
+
+  // 计算支付账户信息
+  const paymentAccounts = useMemo(() => {
+    if (!selectingTokenSymbol) return [];
+    const base = Array.isArray(selectedPayCardIds) ? selectedPayCardIds : selectedCardId ? [selectedCardId] : [];
+    const ids = base.filter(Boolean);
+    if (ids.length === 0) return [];
+    
+    const targetAmount = orderAmount;
+    
+    // 如果只有一个账户，直接显示全部金额
+    if (ids.length === 1) {
+      const card = cards.find((c) => String(c?.id) === String(ids[0]));
+      if (!card) return [];
+      const chain = (card as any)?.raw?.chain ?? (card as any)?.chain ?? {};
+      return [{
+        cardId: String(ids[0]),
+        chainName: String(card?.chainName ?? chain?.chainName ?? ''),
+        cardToken: String(card?.cardToken ?? ''),
+        tokenSymbol: String(selectingTokenSymbol),
+        amount: targetAmount > 0 ? targetAmount : 0,
+      }];
+    }
+
+    // 多个账户时，根据余额分配金额
+    if (!targetAmount || !(targetAmount > 0)) {
+      return [];
+    }
+
+    let remaining = targetAmount;
+    const accounts: Array<{ cardId: string; chainName: string; cardToken: string; tokenSymbol: string; amount: number }> = [];
+    
+    for (const id of ids) {
+      if (!(remaining > 0)) break;
+      const card = cards.find((c) => String(c?.id) === String(id));
+      if (!card) continue;
+      const k = balanceKey(String(id), String(selectingTokenSymbol));
+      const bal = balanceByKey[k]?.value ?? 0;
+      const available = Number.isFinite(bal) ? bal : 0;
+      const take = Math.max(0, Math.min(available, remaining));
+      if (take <= 0) continue;
+      
+      const chain = (card as any)?.raw?.chain ?? (card as any)?.chain ?? {};
+      accounts.push({
+        cardId: String(id),
+        chainName: String(card?.chainName ?? chain?.chainName ?? ''),
+        cardToken: String(card?.cardToken ?? ''),
+        tokenSymbol: String(selectingTokenSymbol),
+        amount: take,
+      });
+      remaining -= take;
+    }
+
+    // 如果还有剩余金额，将剩余金额加到最后一个账户
+    if (remaining > 0 && accounts.length > 0) {
+      const last = accounts[accounts.length - 1];
+      accounts[accounts.length - 1] = {
+        ...last,
+        amount: last.amount + remaining,
+      };
+    }
+
+    return accounts;
+  }, [selectedPayCardIds, selectedCardId, selectingTokenSymbol, orderAmount, cards, balanceByKey, balanceKey]);
 
   const resolveChainType = useCallback((card: any) => {
     const chainId = Number(card?.chainId ?? card?.raw?.card?.chainId ?? card?.raw?.chain?.chainId);
@@ -159,41 +230,53 @@ const PaymentScreen = ({ navigation, route }: PaymentScreenProps) => {
     return true;
   }, [fetchBalance, orderAmount, selectedCardId, selectedPayCardIds, selectingTokenSymbol]);
 
-  const buildTransferInfos = useCallback((idsOverride?: string[], amountOverride?: number) => {
-    const base = Array.isArray(idsOverride) ? idsOverride : Array.isArray(selectedPayCardIds) ? selectedPayCardIds : [];
-    const ids = base.filter(Boolean);
-    if (ids.length <= 1) return [];
-    if (!selectingTokenSymbol) return [];
-    const targetAmount = Number(amountOverride ?? orderAmount);
-    if (!targetAmount || !(targetAmount > 0)) return [];
+  const buildTransferInfos = useCallback(
+    (idsOverride?: string[], amountOverride?: number, balancesOverride?: Record<string, number>) => {
+      const base = Array.isArray(idsOverride) ? idsOverride : Array.isArray(selectedPayCardIds) ? selectedPayCardIds : [];
+      const ids = base.filter(Boolean);
+      if (ids.length <= 1) return [];
+      if (!selectingTokenSymbol) return [];
+      const targetAmount = Number(amountOverride ?? orderAmount);
+      if (!targetAmount || !(targetAmount > 0)) return [];
 
-    const formatAmount = (n: number) => {
-      const s = Number.isFinite(n) ? n.toFixed(6) : '0.000000';
-      return s.replace(/\.?0+$/, '');
-    };
+      const formatAmount = (n: number) => {
+        const s = Number.isFinite(n) ? n.toFixed(6) : '0.000000';
+        return s.replace(/\.?0+$/, '');
+      };
 
-    let remaining = targetAmount;
-    const byChain: Record<string, number> = {};
-    for (const id of ids) {
-      if (!(remaining > 0)) break;
-      const card = cards.find((c) => String(c?.id) === String(id));
-      if (!card) continue;
-      const k = balanceKey(String(id), String(selectingTokenSymbol));
-      const bal = balanceByKey[k]?.value ?? 0;
-      const available = Number.isFinite(bal) ? bal : 0;
-      const take = Math.max(0, Math.min(available, remaining));
-      if (take <= 0) continue;
-      const chainType = resolveChainType(card);
-      byChain[chainType] = (byChain[chainType] ?? 0) + take;
-      remaining -= take;
-    }
+      let remaining = targetAmount;
+      const infos: Array<{ chainType: string; tokenSymbol: string; amount: string }> = [];
+      for (const id of ids) {
+        if (!(remaining > 0)) break;
+        const card = cards.find((c) => String(c?.id) === String(id));
+        if (!card) continue;
+        const overrideVal = balancesOverride ? balancesOverride[String(id)] : undefined;
+        const k = balanceKey(String(id), String(selectingTokenSymbol));
+        const bal = overrideVal != null ? overrideVal : balanceByKey[k]?.value ?? 0;
+        const available = Number.isFinite(bal) ? bal : 0;
+        const take = Math.max(0, Math.min(available, remaining));
+        if (take <= 0) continue;
+        infos.push({
+          chainType: resolveChainType(card),
+          tokenSymbol: String(selectingTokenSymbol),
+          amount: formatAmount(take),
+        });
+        remaining -= take;
+      }
 
-    return Object.keys(byChain).map((chainType) => ({
-      chainType,
-      tokenSymbol: String(selectingTokenSymbol),
-      amount: formatAmount(byChain[chainType]),
-    }));
-  }, [balanceByKey, balanceKey, cards, orderAmount, resolveChainType, selectedPayCardIds, selectingTokenSymbol]);
+      if (remaining > 0 && infos.length > 0) {
+        const last = infos[infos.length - 1];
+        const lastAmount = Number(last.amount);
+        infos[infos.length - 1] = {
+          ...last,
+          amount: formatAmount((Number.isFinite(lastAmount) ? lastAmount : 0) + remaining),
+        };
+      }
+
+      return infos;
+    },
+    [balanceByKey, balanceKey, cards, orderAmount, resolveChainType, selectedPayCardIds, selectingTokenSymbol]
+  );
 
   const formatTimestamp = (ts: any) => {
     const n = Number(ts);
@@ -358,17 +441,11 @@ const PaymentScreen = ({ navigation, route }: PaymentScreenProps) => {
     setTotalPay((price + gas).toFixed(4));
   }, [productPrice, gasFee]);
 
-
-  const fetchTransFactor = useCallback(async () => {
+const fetchTransFactor = useCallback(async () => {
     try {
-      const primaryAccountNumber = resolvePrimaryAccountNumber();
-      if (!primaryAccountNumber) {
-        setFactor(null);
-        return;
-      }
       setFactorLoading(true);
       setFactorError('');
-      const res = await fetch(`http://172.20.10.6:8088/api/v1/posTransaction/queryTransFactor?primaryAccountNumber=${encodeURIComponent(primaryAccountNumber)}`, {
+      const res = await fetch('http://172.20.10.6:8088/api/v1/posTransaction/queryTransFactor?primaryAccountNumber=625807******4153', {
         method: 'GET',
         headers: { 'Content-Type': 'application/json' },
       });
@@ -384,12 +461,16 @@ const PaymentScreen = ({ navigation, route }: PaymentScreenProps) => {
         ...(prev || {}),
         ...first,
       }));
+      // setGasFee(data?.gasCost != null ? String(data.gasCost) : '');
+      setProductPrice(prev => prev); // 交易金额仍来自 scanText
+      // setTotalPay(prev => prev);
     } catch (e: any) {
       setFactorError(String(e?.message || e));
     } finally {
       setFactorLoading(false);
     }
-  }, [resolvePrimaryAccountNumber]);
+  }, [scanText]);
+
 
   const fetchGasCost = useCallback(async () => {
   try {
@@ -562,6 +643,50 @@ const PaymentScreen = ({ navigation, route }: PaymentScreenProps) => {
             </View>
           )}
 
+          {selectingTokenSymbol && paymentAccounts.length > 0 && (
+            <View style={{ alignSelf: 'stretch', marginTop: 12 }}>
+              <View style={styles.sectionRow}>
+                <Text style={styles.sectionTitle}>支付账户</Text>
+                <Text style={styles.sectionValue}>
+                  {paymentAccounts.length}个账户 {'>'}
+                </Text>
+              </View>
+              {paymentAccounts.map((account, index) => {
+                const formatAmount = (n: number) => {
+                  const s = Number.isFinite(n) ? n.toFixed(6) : '0.000000';
+                  return s.replace(/\.?0+$/, '');
+                };
+                return (
+                  <View key={account.cardId} style={styles.paymentAccountItem}>
+                    <View style={styles.paymentAccountLeft}>
+                      <View style={styles.chainIcon} />
+                      <View style={styles.paymentAccountInfo}>
+                        <Text style={styles.paymentAccountLabel}>
+                          稳定币账户 {account.chainName} [{maskCardToken(account.cardToken)}]
+                        </Text>
+                      </View>
+                    </View>
+                    <Text style={styles.paymentAccountAmount}>
+                      {formatAmount(account.amount)} {account.tokenSymbol}
+                    </Text>
+                  </View>
+                );
+              })}
+              {paymentAccounts.length > 1 && (
+                <View style={styles.paymentAccountTotal}>
+                  <Text style={styles.paymentAccountTotalLabel}>合计</Text>
+                  <Text style={styles.paymentAccountTotalAmount}>
+                    {(() => {
+                      const total = paymentAccounts.reduce((sum, acc) => sum + acc.amount, 0);
+                      const s = Number.isFinite(total) ? total.toFixed(6) : '0.000000';
+                      return s.replace(/\.?0+$/, '');
+                    })()} {selectingTokenSymbol}
+                  </Text>
+                </View>
+              )}
+            </View>
+          )}
+
           {to && (
             <View style={styles.sectionRow}>
               <Text style={styles.sectionTitle}>接收地址</Text>
@@ -600,57 +725,57 @@ const PaymentScreen = ({ navigation, route }: PaymentScreenProps) => {
               // setSuccessVisible(true);
               // setTxnLoading(true);
               // setTxnError('');
-              // (async () => {
-              //   let ac: AbortController | undefined;
-              //   let tid: any;
-              //   try {
-              //     ac = new AbortController();
-              //     tid = setTimeout(() => ac?.abort(), 30000);
-              //     const res = await fetch('http://172.20.10.6:8088/api/v1/posTransaction/QRcodeConsumeActiveScan', {
-              //       method: 'POST',
-              //       headers: { 'Content-Type': 'application/json' },
-              //       body: JSON.stringify({
-              //         primaryAccountNumber: '6258071001604153',
-              //         transactionAmount: String(factor?.transactionAmount ?? amount ?? ''),
-              //         terminalId: String(factor?.terminalId ?? ''),
-              //         merchantId: String(factor?.merchantId ?? ''),
-              //         referenceNumber: String(factor?.referenceNumber ?? ''),
-              //       }),
-              //       signal: ac.signal,
-              //     });
-              //     const json = await res.json();
-              //     console.warn('json', json);
-              //     const d = json?.data ?? {};
-              //     const mapped = {
-              //       txHash: String(d?.txHash ?? ''),
-              //       status: String(d?.status ?? ''),
-              //       blockNumber: String(d?.blockNumber ?? ''),
-              //       timestamp: String(d?.timestamp ?? ''),
-              //       fromAddress: String(d?.fromAddress ?? ''),
-              //       toAddress: String(d?.toAddress ?? ''),
-              //       gasUsed: String(d?.gasUsed ?? ''),
-              //       gasPrice: String(d?.gasPrice ?? ''),
-              //       gasCost: String(d?.gasCost ?? ''),
-              //       inputData: String(d?.inputData ?? ''),
-              //       functionName: String(d?.functionName ?? ''),
-              //       events: Array.isArray(d?.events) ? d.events : [],
-              //       tokenTransfers: Array.isArray(d?.tokenTransfers) ? d.tokenTransfers : [],
-              //       merchantId: String(d?.merchantId ?? ''),
-              //       terminalId: String(d?.terminalId ?? ''),
-              //       referenceNumber: String(d?.referenceNumber ?? ''),
-              //       transactionAmount: String(d?.transactionAmount ?? ''),
-              //       statusCode: String(json?.statusCode ?? ''),
-              //       msg: String(json?.msg ?? ''),
-              //       totalPay: String((Number(d?.transactionAmount ?? 0) + Number(d?.gasCost ?? 0))),
-              //     } as any;
-              //     setTxn(mapped);
-              //   } catch (e: any) {
-              //     setTxnError(String(e?.message || e));
-              //   } finally {
-              //     if (tid) clearTimeout(tid);
-              //     setTxnLoading(false);
-              //   }
-              // })();
+              (async () => {
+                let ac: AbortController | undefined;
+                let tid: any;
+                try {
+                  ac = new AbortController();
+                  tid = setTimeout(() => ac?.abort(), 30000);
+                  const res = await fetch('http://172.20.10.6:8088/api/v1/posTransaction/QRcodeConsumeActiveScan', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                      primaryAccountNumber: '6258071001604153',
+                      transactionAmount: String(factor?.transactionAmount ?? amount ?? ''),
+                      terminalId: String(factor?.terminalId ?? ''),
+                      merchantId: String(factor?.merchantId ?? ''),
+                      referenceNumber: String(factor?.referenceNumber ?? ''),
+                    }),
+                    signal: ac.signal,
+                  });
+                  const json = await res.json();
+                  console.warn('json', json);
+                  const d = json?.data ?? {};
+                  const mapped = {
+                    txHash: String(d?.txHash ?? ''),
+                    status: String(d?.status ?? ''),
+                    blockNumber: String(d?.blockNumber ?? ''),
+                    timestamp: String(d?.timestamp ?? ''),
+                    fromAddress: String(d?.fromAddress ?? ''),
+                    toAddress: String(d?.toAddress ?? ''),
+                    gasUsed: String(d?.gasUsed ?? ''),
+                    gasPrice: String(d?.gasPrice ?? ''),
+                    gasCost: String(d?.gasCost ?? ''),
+                    inputData: String(d?.inputData ?? ''),
+                    functionName: String(d?.functionName ?? ''),
+                    events: Array.isArray(d?.events) ? d.events : [],
+                    tokenTransfers: Array.isArray(d?.tokenTransfers) ? d.tokenTransfers : [],
+                    merchantId: String(d?.merchantId ?? ''),
+                    terminalId: String(d?.terminalId ?? ''),
+                    referenceNumber: String(d?.referenceNumber ?? ''),
+                    transactionAmount: String(d?.transactionAmount ?? ''),
+                    statusCode: String(json?.statusCode ?? ''),
+                    msg: String(json?.msg ?? ''),
+                    totalPay: String((Number(d?.transactionAmount ?? 0) + Number(d?.gasCost ?? 0))),
+                  } as any;
+                  setTxn(mapped);
+                } catch (e: any) {
+                  // setTxnError(String(e?.message || e));
+                } finally {
+                  if (tid) clearTimeout(tid);
+                  // setTxnLoading(false);
+                }
+              })();
               const isPreAuth = String(factor?.transactionType) === '预授权';
               if (!isPreAuth) {
                 setShowPasswordScreen(true);
@@ -719,15 +844,7 @@ const PaymentScreen = ({ navigation, route }: PaymentScreenProps) => {
               const checked = Array.isArray(selectedPayCardIds) && selectedPayCardIds.includes(id);
               const k = balanceKey(id, String(selectingTokenSymbol));
               const b = balanceByKey[k];
-              const rightText = !selectingTokenSymbol
-                ? ''
-                : b?.loading
-                  ? '查询中…'
-                  : b?.error
-                    ? '查询失败'
-                    : b?.raw
-                      ? String(b.raw)
-                      : '';
+              const rightText = '';
               return (
                 <TouchableOpacity
                   key={id}
@@ -744,11 +861,22 @@ const PaymentScreen = ({ navigation, route }: PaymentScreenProps) => {
                         return next;
                       });
                       setSelectedCardId((prev) => prev || id);
-                      return;
+    
                     }
+                    // 勾选账户后，进入选择币种界面
+                    // 确保 selectingCard 保持为 true，以便显示选择币种界面
+                    setSelectedCardId(id);
+                    setSelectedPayCardIds([id]);
                     setPendingCard(c);
-                    setTokenOptions(Array.isArray((c as any).tokens) ? (c as any).tokens : []);
-                    setSelectingToken(true);
+                    // 从 chain.tokens 中获取币种列表
+                    const chain = (c as any)?.raw?.chain ?? (c as any)?.chain ?? {};
+                    const tokens = Array.isArray(chain?.tokens) ? chain.tokens.map((t: any) => String(t)) : 
+                                   Array.isArray((c as any).tokens) ? (c as any).tokens : [];
+                    setTokenOptions(tokens);
+                    // 如果有可选的币种，则进入选择币种界面；否则保持在选择账户界面
+                    if (tokens.length > 0) {
+                      setSelectingToken(true);
+                    }
                   }}
                 >
                   {multiSelectMode && selectingTokenSymbol ? (
@@ -1060,7 +1188,17 @@ const PaymentScreen = ({ navigation, route }: PaymentScreenProps) => {
                         };
                       })
                       .filter(Boolean);
-                    const transferInfos = useMultiChain ? buildTransferInfos(finalIds, txAmountValue) : [];
+                    const balancesById = useMultiChain
+                      ? Object.fromEntries(
+                        await Promise.all(
+                          finalIds.map(async (id) => {
+                            const v = await getBalanceValue(String(id));
+                            return [String(id), v] as const;
+                          })
+                        )
+                      )
+                      : {};
+                    const transferInfos = useMultiChain ? buildTransferInfos(finalIds, txAmountValue, balancesById) : [];
                     const transactionAmount = String(factor?.transactionAmount ?? amount ?? txAmountValue);
                     const body = usePreAuth
                       ? {
@@ -1601,6 +1739,57 @@ const styles = StyleSheet.create({
   box: { marginTop: 8, alignSelf: 'stretch', borderColor: '#eee', borderWidth: 1, borderRadius: 8, padding: 12 },
   boxTitle: { fontSize: 13, color: '#333', marginBottom: 8, fontWeight: '600' },
   boxText: { fontSize: 12, color: '#444' },
+  paymentAccountItem: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginTop: 12,
+    paddingVertical: 8,
+  },
+  paymentAccountLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flex: 1,
+  },
+  chainIcon: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: '#f0f0f0',
+    marginRight: 12,
+  },
+  paymentAccountInfo: {
+    flex: 1,
+  },
+  paymentAccountLabel: {
+    fontSize: 13,
+    color: '#333',
+    fontWeight: '500',
+  },
+  paymentAccountAmount: {
+    fontSize: 13,
+    color: '#333',
+    fontWeight: '600',
+  },
+  paymentAccountTotal: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginTop: 12,
+    paddingTop: 12,
+    borderTopWidth: 1,
+    borderTopColor: '#f1f1f1',
+  },
+  paymentAccountTotalLabel: {
+    fontSize: 14,
+    color: '#222',
+    fontWeight: '600',
+  },
+  paymentAccountTotalAmount: {
+    fontSize: 14,
+    color: '#222',
+    fontWeight: '600',
+  },
 
 });
 
