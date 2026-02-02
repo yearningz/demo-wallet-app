@@ -21,7 +21,7 @@ const HomeScreen = ({ navigation }: Props) => {
                   <View style={styles.actionIcon}><Text style={styles.iconText}>○</Text></View>
                   <Text style={styles.actionLabel}>扫一扫</Text>
                 </TouchableOpacity>
-                <TouchableOpacity style={styles.action} onPress={() => navigation.navigate('SelectToken')}>
+                <TouchableOpacity style={styles.action}>
                   <View style={styles.actionIcon}><Text style={styles.iconText}>⬇</Text></View>
                   <Text style={styles.actionLabel}>发送</Text>
                 </TouchableOpacity>

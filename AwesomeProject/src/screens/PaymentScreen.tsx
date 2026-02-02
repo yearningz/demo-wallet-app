@@ -63,8 +63,30 @@ const PaymentScreen = ({ navigation, route }: PaymentScreenProps) => {
   const [payPassword, setPayPassword] = useState('');
 // 支付状态：idle | paying | success | timeout
   const [payStatus, setPayStatus] = useState<'idle' | 'loading' | 'success' | 'timeout'>('idle');
+  // 是否是多链支付
+  const [isMultiChainPayment, setIsMultiChainPayment] = useState(false);
+  // 多链支付结果列表
+  const [multiChainTxns, setMultiChainTxns] = useState<any[]>([]);
+  // 是否有 orderInfos 数组
+  const [hasOrderInfos, setHasOrderInfos] = useState(false);
+  // orderInfos 数组长度
+  const [orderInfosLength, setOrderInfosLength] = useState(0);
+  // 支付方式类型：'stablecoin' | 'bankcard'
+  const [paymentMethodType, setPaymentMethodType] = useState<'stablecoin' | 'bankcard'>('stablecoin');
+  // 当前选择的币种（用于选择界面显示）
+  const [selectingCurrency, setSelectingCurrency] = useState<string>('');
+  // 银行卡列表
+  const [bankCards, setBankCards] = useState<any[]>([]);
+  const [bankCardsLoading, setBankCardsLoading] = useState(false);
+  const [bankCardsError, setBankCardsError] = useState('');
+  const [selectedBankCardId, setSelectedBankCardId] = useState<string>('');
+  // 价格转换相关
+  const [convertPrice, setConvertPrice] = useState<string>('');
+  const [convertPriceLoading, setConvertPriceLoading] = useState(false);
+  const [convertPriceError, setConvertPriceError] = useState('');
 
-  const orderAmount = useMemo(() => {
+  // 原始订单金额（美元）
+  const orderAmountUSD = useMemo(() => {
     const v1 = Number(factor?.transactionAmount);
     if (Number.isFinite(v1) && v1 > 0) return v1;
     const v2 = Number(productPrice);
@@ -73,6 +95,20 @@ const PaymentScreen = ({ navigation, route }: PaymentScreenProps) => {
     if (Number.isFinite(v3) && v3 > 0) return v3;
     return 0;
   }, [factor?.transactionAmount, productPrice, amount]);
+
+  // 转换后的订单金额（币种单位）
+  const orderAmount = useMemo(() => {
+    // 如果选择了币种且有转换价格，则使用转换后的金额
+    // convertPrice 是 1 个币种对应的美元金额，所以需要的币种数量 = 美元金额 / 转换价格
+    if (selectingTokenSymbol && convertPrice && orderAmountUSD > 0) {
+      const convertRate = Number(convertPrice);
+      if (Number.isFinite(convertRate) && convertRate > 0) {
+        return orderAmountUSD / convertRate;
+      }
+    }
+    // 否则返回美元金额
+    return orderAmountUSD;
+  }, [orderAmountUSD, selectingTokenSymbol, convertPrice]);
 
   const balanceKey = useCallback((cardId: string, tokenSymbol: string) => `${cardId}|${tokenSymbol}`, []);
 
@@ -245,7 +281,7 @@ const PaymentScreen = ({ navigation, route }: PaymentScreenProps) => {
       };
 
       let remaining = targetAmount;
-      const infos: Array<{ chainType: string; tokenSymbol: string; amount: string }> = [];
+      const infos: Array<{ primaryAccountNumber: string; chainType: string; tokenSymbol: string; amount: string }> = [];
       for (const id of ids) {
         if (!(remaining > 0)) break;
         const card = cards.find((c) => String(c?.id) === String(id));
@@ -256,7 +292,9 @@ const PaymentScreen = ({ navigation, route }: PaymentScreenProps) => {
         const available = Number.isFinite(bal) ? bal : 0;
         const take = Math.max(0, Math.min(available, remaining));
         if (take <= 0) continue;
+        const primaryAccountNumber = String((card as any).cardToken ?? '');
         infos.push({
+          primaryAccountNumber,
           chainType: resolveChainType(card),
           tokenSymbol: String(selectingTokenSymbol),
           amount: formatAmount(take),
@@ -352,6 +390,77 @@ const PaymentScreen = ({ navigation, route }: PaymentScreenProps) => {
     }
   }, []);
 
+  const fetchBankCards = useCallback(async () => {
+    try {
+      setBankCardsLoading(true);
+      setBankCardsError('');
+      // GET 请求使用 query 参数
+      const url = `${API_BASE_URL}/posTransaction/queryCards?userId=03572638`;
+      const res = await fetch(url, {
+        method: 'GET',
+        headers: { 'Content-Type': 'application/json' },
+      });
+      const json = await res.json();
+      const cardList = Array.isArray(json?.data) ? json.data : [];
+      const mapped = cardList.map((card: any, idx: number) => {
+        const primaryAccountNumber = String(card?.primaryAccountNumber ?? '');
+        const id = primaryAccountNumber || String(idx);
+        const bankName = String(card?.issuingInstitution ?? '');
+        const cardType = String(card?.cardType ?? '');
+        const userId = String(card?.userId ?? '');
+        // 卡类型映射：B 可能是银行卡
+        const cardTypeText = cardType === 'B' ? '银行卡' : cardType;
+        return { 
+          id, 
+          cardToken: primaryAccountNumber, 
+          bankName, 
+          cardType: cardTypeText, 
+          cardHolderName: '', // 接口返回中没有持卡人姓名
+          userId,
+          raw: card 
+        };
+      });
+      setBankCards(mapped);
+      if (mapped.length > 0 && !selectedBankCardId) {
+        setSelectedBankCardId(mapped[0].id);
+      }
+    } catch (e: any) {
+      setBankCardsError(String(e?.message || e));
+    } finally {
+      setBankCardsLoading(false);
+    }
+  }, [selectedBankCardId]);
+
+  // 获取价格转换（美元转币种）
+  const fetchConvertPrice = useCallback(async (tokenSymbol: string) => {
+    if (!tokenSymbol) {
+      setConvertPrice('');
+      return;
+    }
+    try {
+      setConvertPriceLoading(true);
+      setConvertPriceError('');
+      const res = await fetch(`${API_BASE_URL}/chainlink/getConvertPrice`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ tokenSymbol }),
+      });
+      const json = await res.json();
+      if (json?.statusCode === '00' && json?.data) {
+        const price = String(json.data);
+        setConvertPrice(price);
+      } else {
+        setConvertPriceError(json?.msg || '获取转换价格失败');
+        setConvertPrice('');
+      }
+    } catch (e: any) {
+      setConvertPriceError(String(e?.message || e));
+      setConvertPrice('');
+    } finally {
+      setConvertPriceLoading(false);
+    }
+  }, []);
+
   useEffect(() => {
     fetchAccountCardList();
   }, [fetchAccountCardList]);
@@ -359,8 +468,28 @@ const PaymentScreen = ({ navigation, route }: PaymentScreenProps) => {
   useEffect(() => {
     if (selectingCard) {
       fetchAccountCardList();
+      // 如果已经有选择的币种，设置到选择界面
+      if (selectingTokenSymbol && !selectingCurrency) {
+        setSelectingCurrency(selectingTokenSymbol);
+      }
     }
-  }, [selectingCard, fetchAccountCardList]);
+  }, [selectingCard, fetchAccountCardList, selectingTokenSymbol, selectingCurrency]);
+
+  useEffect(() => {
+    // 当切换到银行卡标签且银行卡列表为空时，自动查询
+    if (selectingCard && paymentMethodType === 'bankcard' && bankCards.length === 0 && !bankCardsLoading) {
+      fetchBankCards();
+    }
+  }, [selectingCard, paymentMethodType, bankCards.length, bankCardsLoading, fetchBankCards]);
+
+  // 当选择币种时，自动获取转换价格
+  useEffect(() => {
+    if (selectingTokenSymbol && orderAmountUSD > 0) {
+      fetchConvertPrice(selectingTokenSymbol);
+    } else {
+      setConvertPrice('');
+    }
+  }, [selectingTokenSymbol, orderAmountUSD, fetchConvertPrice]);
 
   useEffect(() => {
     if (!scanText) return;
@@ -407,19 +536,34 @@ const PaymentScreen = ({ navigation, route }: PaymentScreenProps) => {
 
   useEffect(() => {
     const obj = parseScanText(scanText);
+    console.log('parseScanText result:', obj, 'scanText:', scanText);
     if (obj && typeof obj === 'object') {
-      setFactor((prev: any) => ({
-        ...(prev || {}),
-        merchantId: obj.merchantId ?? (prev || {}).merchantId,
-        terminalId: obj.terminalId ?? (prev || {}).terminalId,
-        referenceNumber: obj.referenceNumber ?? (prev || {}).referenceNumber,
-        transactionAmount: obj.transactionAmount != null ? Number(obj.transactionAmount) : (prev || {}).transactionAmount,
-        transactionType: obj.transactionType ?? (prev || {}).transactionType,
-      }));
+      const newFactor = {
+        merchantId: obj.merchantId ?? undefined,
+        terminalId: obj.terminalId ?? undefined,
+        referenceNumber: obj.referenceNumber ?? undefined,
+        transactionAmount: obj.transactionAmount != null ? Number(obj.transactionAmount) : undefined,
+        transactionType: obj.transactionType ?? undefined,
+      };
+      console.log('Setting factor from scanText:', newFactor);
+      setFactor((prev: any) => {
+        const merged = {
+          ...(prev || {}),
+          ...newFactor,
+          // 确保关键字段不会被 undefined 覆盖
+          merchantId: newFactor.merchantId ?? prev?.merchantId,
+          terminalId: newFactor.terminalId ?? prev?.terminalId,
+          referenceNumber: newFactor.referenceNumber ?? prev?.referenceNumber,
+          transactionAmount: newFactor.transactionAmount ?? prev?.transactionAmount,
+          transactionType: newFactor.transactionType ?? prev?.transactionType,
+        };
+        console.log('Merged factor:', merged);
+        return merged;
+      });
       //1.4不从交易要素获取商品价格
       const amt = obj.transactionAmount != null ? Number(obj.transactionAmount) : 0;
       setProductPrice(amt.toFixed(4) as unknown as number);
-      // 预授权检查移至“确认付款”点击后执行
+      // 预授权检查移至"确认付款"点击后执行
       // const total = (amt + Number(gasFee || 0)).toFixed(4);
       //     const total =
       // Number.isFinite(Number(amt))
@@ -445,21 +589,25 @@ const fetchTransFactor = useCallback(async () => {
     try {
       setFactorLoading(true);
       setFactorError('');
-      const res = await fetch('http://172.20.10.6:8088/api/v1/posTransaction/queryTransFactor?primaryAccountNumber=625807******4153', {
+      const res = await fetch('http://172.20.10.14:4523/m1/7468733-7203316-defaul/api/v1/posTransaction/queryTransFactor?primaryAccountNumber=625807******4153', {
         method: 'GET',
         headers: { 'Content-Type': 'application/json' },
       });
       const json = await res.json();
       const list: any[] = Array.isArray(json?.data) ? json.data : [];
       if (list.length === 0) {
-        // 防御：接口正常但无数据
-        setFactor(null);
+        // 防御：接口正常但无数据，但不清空已有的 factor 数据（可能来自 scanText）
+        // setFactor(null); // 注释掉，保留已有数据
         return;
       }
       const first = list[0];
       setFactor((prev: any) => ({
         ...(prev || {}),
         ...first,
+        // 确保从 scanText 解析的关键字段不会被覆盖
+        merchantId: first.merchantId ?? prev?.merchantId,
+        terminalId: first.terminalId ?? prev?.terminalId,
+        referenceNumber: first.referenceNumber ?? prev?.referenceNumber,
       }));
       // setGasFee(data?.gasCost != null ? String(data.gasCost) : '');
       setProductPrice(prev => prev); // 交易金额仍来自 scanText
@@ -532,16 +680,14 @@ const fetchTransFactor = useCallback(async () => {
             <TouchableOpacity onPress={() => navigation.goBack()} style={styles.closeBtn}>
               <Text style={styles.closeText}>×</Text>
             </TouchableOpacity>
-            <TouchableOpacity style={styles.helpBtn}>
-              <Text style={styles.helpText}>?</Text>
-            </TouchableOpacity>
           </View>
 
-          {factorLoading && <Text style={styles.sectionDesc}>正在获取交易要素…</Text>}
-          {!!factorError && <Text style={styles.sectionDesc}>错误：{factorError}</Text>}
-          {cardsLoading && <Text style={styles.sectionDesc}>正在获取账户列表…</Text>}
-          {!!cardsError && <Text style={styles.sectionDesc}>错误：{cardsError}</Text>}
-          {!!preAuthError && <Text style={styles.sectionDesc}>错误：{preAuthError}</Text>}
+          {(factorLoading || cardsLoading) && <Text style={styles.sectionDesc}>正在查询...</Text>}
+          {(!!factorError || !!cardsError || !!preAuthError) && (
+            <Text style={styles.sectionDesc}>
+              错误：{factorError || cardsError || preAuthError}
+            </Text>
+          )}
 
           {/* <View style={styles.amountBlock}>
           <Text style={styles.currency}>$</Text>
@@ -608,7 +754,7 @@ const fetchTransFactor = useCallback(async () => {
           <Text style={styles.sectionValue}>以太网</Text>
         </View>
 
-          <TouchableOpacity
+          {/* <TouchableOpacity
             style={styles.sectionRow}
             onPress={() => {
               setMultiSelectMode(balanceInsufficientHint);
@@ -632,25 +778,27 @@ const fetchTransFactor = useCallback(async () => {
             </View>
           </TouchableOpacity>
 
-          {balanceInsufficientHint && (
-            <Text style={[styles.sectionDesc, { marginTop: 8 }]}>余额不足，点击“支付方式”可多选账户</Text>
-          )}
-
           {(selectingTokenSymbol) && (
             <View style={styles.sectionRow}>
               <Text style={styles.sectionTitle}>币种</Text>
               <Text style={styles.sectionValue}>{selectingTokenSymbol ?? '-'} </Text>
             </View>
-          )}
+          )} */}
 
           {selectingTokenSymbol && paymentAccounts.length > 0 && (
             <View style={{ alignSelf: 'stretch', marginTop: 12 }}>
-              <View style={styles.sectionRow}>
+              <TouchableOpacity
+                style={styles.sectionRow}
+                onPress={() => {
+                  setMultiSelectMode(balanceInsufficientHint);
+                  setSelectingCard(true);
+                }}
+              >
                 <Text style={styles.sectionTitle}>支付账户</Text>
                 <Text style={styles.sectionValue}>
                   {paymentAccounts.length}个账户 {'>'}
                 </Text>
-              </View>
+              </TouchableOpacity>
               {paymentAccounts.map((account, index) => {
                 const formatAmount = (n: number) => {
                   const s = Number.isFinite(n) ? n.toFixed(6) : '0.000000';
@@ -684,6 +832,43 @@ const fetchTransFactor = useCallback(async () => {
                   </Text>
                 </View>
               )}
+              {balanceInsufficientHint && (() => {
+                // 计算当前账户总余额
+                const base = Array.isArray(selectedPayCardIds) ? selectedPayCardIds : selectedCardId ? [selectedCardId] : [];
+                const ids = base.filter(Boolean);
+                const totalBalance = ids.reduce((sum, id) => {
+                  const k = balanceKey(String(id), String(selectingTokenSymbol));
+                  const bal = balanceByKey[k]?.value ?? 0;
+                  return sum + (Number.isFinite(bal) ? bal : 0);
+                }, 0);
+                const needed = orderAmount - totalBalance;
+                const formatAmount = (n: number) => {
+                  if (!Number.isFinite(n) || n < 0) return '0.00';
+                  return n.toFixed(2);
+                };
+                return (
+                  <View style={styles.insufficientBalanceBox}>
+                    <View style={styles.insufficientBalanceContent}>
+                      <Text style={styles.insufficientBalanceIcon}>⚠</Text>
+                      <View style={styles.insufficientBalanceText}>
+                        <Text style={styles.insufficientBalanceTitle}>余额不足</Text>
+                        <Text style={styles.insufficientBalanceDesc}>
+                          当前账户余额{formatAmount(totalBalance)} {selectingTokenSymbol}, 还需{formatAmount(needed)} {selectingTokenSymbol}
+                        </Text>
+                        <TouchableOpacity
+                          onPress={() => {
+                            setMultiSelectMode(true);
+                            setSelectingCard(true);
+                          }}
+                          style={styles.addAccountLink}
+                        >
+                          <Text style={styles.addAccountLinkText}>+ 添加其他链账户支付</Text>
+                        </TouchableOpacity>
+                      </View>
+                    </View>
+                  </View>
+                );
+              })()}
             </View>
           )}
 
@@ -712,7 +897,7 @@ const fetchTransFactor = useCallback(async () => {
           </View>
 
           <TouchableOpacity
-            disabled={!agreed}
+            disabled={!agreed || balanceInsufficientHint}
             onPress={() => {
               (async () => {
                 if (!selectingTokenSymbol) {
@@ -809,9 +994,13 @@ const fetchTransFactor = useCallback(async () => {
               })();
               })();
             }}
-            style={[styles.payBtn, !agreed && styles.payBtnDisabled]}
+            style={[styles.payBtn, (!agreed || balanceInsufficientHint) && styles.payBtnDisabled]}
           >
-            <Text style={styles.payBtnText}>{String(factor?.transactionType) === '预授权' ? '确认授权' : '确认付款'}</Text>
+            <Text style={styles.payBtnText}>
+              {balanceInsufficientHint 
+                ? '余额不足' 
+                : String(factor?.transactionType) === '预授权' ? '确认授权' : '确认付款'}
+            </Text>
           </TouchableOpacity>
         </View>
       )}
@@ -819,7 +1008,7 @@ const fetchTransFactor = useCallback(async () => {
         <View style={styles.sheet}>
           <View style={styles.handle} />
 
-          <View style={styles.headerRow}>
+          <View style={styles.paymentModalHeader}>
             <TouchableOpacity
               onPress={() => {
                 setSelectingCard(false);
@@ -827,9 +1016,46 @@ const fetchTransFactor = useCallback(async () => {
               }}
               style={styles.closeBtn}
             >
-              <Text style={styles.closeText}>←</Text>
+              <Text style={styles.closeText}>×</Text>
             </TouchableOpacity>
-            <Text style={styles.sheetTitle}>{multiSelectMode ? '选择付款方式（可多选）' : '选择付款方式'}</Text>
+            <Text style={styles.paymentModalTitle}>选择支付账户</Text>
+            <TouchableOpacity
+              onPress={() => {
+                setSelectingCard(false);
+                setMultiSelectMode(false);
+              }}
+              style={styles.closeBtn}
+            >
+              <Text style={styles.closeText}>×</Text>
+            </TouchableOpacity>
+          </View>
+
+          {/* 支付方式标签页 */}
+          <View style={styles.paymentMethodTabs}>
+            <TouchableOpacity
+              style={[styles.paymentMethodTab, paymentMethodType === 'stablecoin' && styles.paymentMethodTabActive]}
+              onPress={() => setPaymentMethodType('stablecoin')}
+            >
+              <Text style={[styles.paymentMethodTabText, paymentMethodType === 'stablecoin' && styles.paymentMethodTabTextActive]}>
+                稳定币账户
+              </Text>
+              {paymentMethodType === 'stablecoin' && <View style={styles.paymentMethodTabUnderline} />}
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[styles.paymentMethodTab, paymentMethodType === 'bankcard' && styles.paymentMethodTabActive]}
+              onPress={() => {
+                setPaymentMethodType('bankcard');
+                // 切换到银行卡时，查询银行卡列表
+                if (bankCards.length === 0 && !bankCardsLoading) {
+                  fetchBankCards();
+                }
+              }}
+            >
+              <Text style={[styles.paymentMethodTabText, paymentMethodType === 'bankcard' && styles.paymentMethodTabTextActive]}>
+                银行卡
+              </Text>
+              {paymentMethodType === 'bankcard' && <View style={styles.paymentMethodTabUnderline} />}
+            </TouchableOpacity>
           </View>
 
           <ScrollView style={styles.cardListLimited} contentContainerStyle={styles.cardListContent} showsVerticalScrollIndicator>
@@ -839,72 +1065,202 @@ const fetchTransFactor = useCallback(async () => {
               </View>
             )}
             {!!cardsError && <Text style={styles.sectionDesc}>错误：{cardsError}</Text>}
-            {(multiSelectMode && selectingTokenSymbol ? cards.filter((c) => Array.isArray((c as any).tokens) && (c as any).tokens.includes(selectingTokenSymbol)) : cards).map((c) => {
-              const id = String((c as any).id);
-              const checked = Array.isArray(selectedPayCardIds) && selectedPayCardIds.includes(id);
-              const k = balanceKey(id, String(selectingTokenSymbol));
-              const b = balanceByKey[k];
-              const rightText = '';
-              return (
-                <TouchableOpacity
-                  key={id}
-                  style={styles.cardItem}
-                  onPress={() => {
-                    if (multiSelectMode && selectingTokenSymbol) {
-                      setSelectedPayCardIds((prev) => {
-                        const base = Array.isArray(prev) ? prev : [];
-                        const has = base.includes(id);
-                        const next = has ? base.filter((x) => x !== id) : [...base, id];
-                        if (!has) {
-                          fetchBalance(id, String(selectingTokenSymbol));
+
+            {paymentMethodType === 'stablecoin' && (
+              <>
+                {/* 币种选择区域 */}
+                <View style={styles.currencySelectionSection}>
+                  <Text style={styles.currencySelectionLabel}>选择币种</Text>
+                  <View style={styles.currencyButtons}>
+                    <TouchableOpacity
+                      style={[styles.currencyButton, selectingCurrency === 'USDC' && styles.currencyButtonSelected]}
+                      onPress={() => {
+                        setSelectingCurrency('USDC');
+                        // 更新币种选择
+                        setSelectingTokenSymbol('USDC');
+                        // 如果已经选择了账户，需要重新获取余额
+                        if (selectedCardId || (Array.isArray(selectedPayCardIds) && selectedPayCardIds.length > 0)) {
+                          const ids = Array.isArray(selectedPayCardIds) && selectedPayCardIds.length > 0 
+                            ? selectedPayCardIds 
+                            : selectedCardId ? [selectedCardId] : [];
+                          ids.forEach((id) => {
+                            fetchBalance(String(id), 'USDC');
+                          });
                         }
-                        return next;
-                      });
-                      setSelectedCardId((prev) => prev || id);
-    
-                    }
-                    // 勾选账户后，进入选择币种界面
-                    // 确保 selectingCard 保持为 true，以便显示选择币种界面
-                    setSelectedCardId(id);
-                    setSelectedPayCardIds([id]);
-                    setPendingCard(c);
-                    // 从 chain.tokens 中获取币种列表
+                      }}
+                    >
+                      <View style={[styles.currencyIcon, styles.currencyIconUSDC]}>
+                        <Text style={styles.currencyIconText}>C</Text>
+                      </View>
+                      <Text style={[styles.currencyButtonText, selectingCurrency === 'USDC' && styles.currencyButtonTextSelected]}>
+                        USDC
+                      </Text>
+                      {selectingCurrency === 'USDC' && (
+                        <Text style={styles.currencyCheckmark}>✓</Text>
+                      )}
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      style={[styles.currencyButton, selectingCurrency === 'USDT' && styles.currencyButtonSelected]}
+                      onPress={() => {
+                        setSelectingCurrency('USDT');
+                        // 更新币种选择
+                        setSelectingTokenSymbol('USDT');
+                        // 如果已经选择了账户，需要重新获取余额
+                        if (selectedCardId || (Array.isArray(selectedPayCardIds) && selectedPayCardIds.length > 0)) {
+                          const ids = Array.isArray(selectedPayCardIds) && selectedPayCardIds.length > 0 
+                            ? selectedPayCardIds 
+                            : selectedCardId ? [selectedCardId] : [];
+                          ids.forEach((id) => {
+                            fetchBalance(String(id), 'USDT');
+                          });
+                        }
+                      }}
+                    >
+                      <View style={[styles.currencyIcon, styles.currencyIconUSDT]}>
+                        <Text style={styles.currencyIconText}>T</Text>
+                      </View>
+                      <Text style={[styles.currencyButtonText, selectingCurrency === 'USDT' && styles.currencyButtonTextSelected]}>
+                        USDT
+                      </Text>
+                      {selectingCurrency === 'USDT' && (
+                        <Text style={styles.currencyCheckmark}>✓</Text>
+                      )}
+                    </TouchableOpacity>
+                  </View>
+                </View>
+
+                {/* 账户选择区域 */}
+                <View style={styles.accountSelectionSection}>
+                  <Text style={styles.accountSelectionLabel}>选择账户</Text>
+                  {(multiSelectMode && selectingCurrency ? cards.filter((c) => {
                     const chain = (c as any)?.raw?.chain ?? (c as any)?.chain ?? {};
                     const tokens = Array.isArray(chain?.tokens) ? chain.tokens.map((t: any) => String(t)) : 
                                    Array.isArray((c as any).tokens) ? (c as any).tokens : [];
-                    setTokenOptions(tokens);
-                    // 如果有可选的币种，则进入选择币种界面；否则保持在选择账户界面
-                    if (tokens.length > 0) {
-                      setSelectingToken(true);
-                    }
-                  }}
-                >
-                  {multiSelectMode && selectingTokenSymbol ? (
-                    <View style={[styles.checkbox, checked && styles.checkboxChecked]}>
-                      {checked ? <Text style={styles.checkboxTick}>✓</Text> : null}
-                    </View>
-                  ) : (
-                    <View style={styles.cardThumb} />
-                  )}
-                  <View style={[styles.cardMiddle, multiSelectMode && selectingTokenSymbol ? { marginLeft: 12 } : null]}>
-                    <Text style={styles.cardName}>{String((c as any).name)} [{String((c as any).cardToken ?? '')}]</Text>
-                    <Text style={styles.cardBalance}>{String((c as any).chainWalletAddress ?? '')}</Text>
+                    return tokens.includes(selectingCurrency);
+                  }) : cards).map((c) => {
+                    const id = String((c as any).id);
+                    const isSelected = selectedCardId === id || (Array.isArray(selectedPayCardIds) && selectedPayCardIds.includes(id));
+                    const chain = (c as any)?.raw?.chain ?? (c as any)?.chain ?? {};
+                    const chainName = String(c?.chainName ?? chain?.chainName ?? '');
+                    
+                    // 根据链类型选择图标和样式
+                    const getChainIconStyle = () => {
+                      const chainId = Number(c?.chainId ?? chain?.chainId ?? 0);
+                      if (chainId === 1 || chainName.toUpperCase().includes('ETHEREUM')) {
+                        return { style: styles.chainIconEthereum, icon: '◆', isDiamond: true };
+                      } else if (chainId === 42161 || chainName.toUpperCase().includes('ARBITRUM')) {
+                        return { style: styles.chainIconArbitrum, icon: '●', isDiamond: false };
+                      } else if (chainName.toUpperCase().includes('POLYGON')) {
+                        return { style: styles.chainIconPolygon, icon: '∞', isDiamond: false };
+                      }
+                      return { style: styles.chainIconDefault, icon: '', isDiamond: false };
+                    };
+
+                    const chainIcon = getChainIconStyle();
+
+                    return (
+                      <TouchableOpacity
+                        key={id}
+                        style={[styles.accountItem, isSelected && styles.accountItemSelected]}
+                        onPress={() => {
+                          if (multiSelectMode && selectingCurrency) {
+                            setSelectedPayCardIds((prev) => {
+                              const base = Array.isArray(prev) ? prev : [];
+                              const has = base.includes(id);
+                              const next = has ? base.filter((x) => x !== id) : [...base, id];
+                              if (!has) {
+                                fetchBalance(id, String(selectingCurrency));
+                              }
+                              return next;
+                            });
+                            setSelectedCardId((prev) => prev || id);
+                          } else {
+                            // 如果没有选择币种，提示用户先选择币种
+                            if (!selectingCurrency) {
+                              Alert.alert('提示', '请先选择币种');
+                              return;
+                            }
+                            setSelectedCardId(id);
+                            setSelectedPayCardIds([id]);
+                            setSelectingTokenSymbol(selectingCurrency);
+                            setSelectingCard(false);
+                            setMultiSelectMode(false);
+                          }
+                        }}
+                      >
+                        <View style={[styles.accountIcon, chainIcon.style, chainIcon.isDiamond && styles.chainIconDiamond]}>
+                          {chainIcon.icon ? (
+                            <Text style={[styles.chainIconText, chainIcon.isDiamond && styles.chainIconDiamondText]}>
+                              {chainIcon.icon}
+                            </Text>
+                          ) : null}
+                        </View>
+                        <View style={styles.accountInfo}>
+                          <Text style={styles.accountTypeText}>稳定币账户</Text>
+                          <Text style={styles.accountAddressText}>
+                            {chainName} [{maskCardToken(String((c as any).cardToken ?? ''))}]
+                          </Text>
+                        </View>
+                        <Text style={styles.accountArrow}>›</Text>
+                      </TouchableOpacity>
+                    );
+                  })}
+                </View>
+              </>
+            )}
+
+            {paymentMethodType === 'bankcard' && (
+              <View style={styles.bankCardSection}>
+                {bankCardsLoading && (
+                  <View style={styles.stretchMarginTop8}>
+                    <ActivityIndicator />
                   </View>
-                  {multiSelectMode && selectingTokenSymbol ? (
-                    <View style={{ width: 96, alignItems: 'flex-end' }}>
-                      <Text style={styles.cardBalance}>{rightText || '-'}</Text>
-                    </View>
-                  ) : selectedCardId === c.id ? (
-                    <Text style={styles.selectedBadge}>✓</Text>
-                  ) : (
-                    <View style={styles.unselectedDot} />
-                  )}
-                </TouchableOpacity>
-              );
-            })}
+                )}
+                {!!bankCardsError && <Text style={styles.sectionDesc}>错误：{bankCardsError}</Text>}
+                {!bankCardsLoading && bankCards.length === 0 && !bankCardsError && (
+                  <Text style={styles.sectionDesc}>暂无银行卡</Text>
+                )}
+                {bankCards.map((bankCard) => {
+                  const id = String(bankCard.id);
+                  const isSelected = selectedBankCardId === id;
+                  return (
+                    <TouchableOpacity
+                      key={id}
+                      style={[styles.accountItem, isSelected && styles.accountItemSelected]}
+                      onPress={() => {
+                        setSelectedBankCardId(id);
+                        // 选择银行卡后，关闭选择界面
+                        setSelectingCard(false);
+                        setMultiSelectMode(false);
+                        // TODO: 处理银行卡选择逻辑
+                      }}
+                    >
+                      <View style={[styles.accountIcon, styles.bankCardIcon]}>
+                        <Text style={styles.bankCardIconText}>
+                          {bankCard.bankName ? bankCard.bankName.charAt(0) : '卡'}
+                        </Text>
+                      </View>
+                      <View style={styles.accountInfo}>
+                        <Text style={styles.accountTypeText}>
+                          银行卡 {bankCard.bankName ? `· ${bankCard.bankName}` : ''}
+                        </Text>
+                        <Text style={styles.accountAddressText}>
+                          {maskCardToken(bankCard.cardToken)}
+                        </Text>
+                      </View>
+                      {isSelected ? (
+                        <Text style={styles.accountArrow}>✓</Text>
+                      ) : (
+                        <Text style={styles.accountArrow}>›</Text>
+                      )}
+                    </TouchableOpacity>
+                  );
+                })}
+              </View>
+            )}
           </ScrollView>
 
-          {multiSelectMode && selectingTokenSymbol && (
+          {multiSelectMode && selectingCurrency && (
             <TouchableOpacity
               style={[styles.payBtn, (!Array.isArray(selectedPayCardIds) || selectedPayCardIds.length === 0) && styles.payBtnDisabled]}
               disabled={!Array.isArray(selectedPayCardIds) || selectedPayCardIds.length === 0}
@@ -912,6 +1268,9 @@ const fetchTransFactor = useCallback(async () => {
                 const first = Array.isArray(selectedPayCardIds) ? selectedPayCardIds[0] : '';
                 if (first) setSelectedCardId(String(first));
                 setUseMultiAccountPayment(Array.isArray(selectedPayCardIds) && selectedPayCardIds.length > 1);
+                if (selectingCurrency) {
+                  setSelectingTokenSymbol(selectingCurrency);
+                }
                 setSelectingCard(false);
                 setMultiSelectMode(false);
               }}
@@ -1241,18 +1600,82 @@ const fetchTransFactor = useCallback(async () => {
                     const json = await res.json();
                     const d = json?.data ?? {};
                     if (json?.statusCode === '00') {
-                      const mapped = {
-                        txHash: String(d?.txHash ?? ''),
-                        status: String(d?.status ?? ''),
-                        blockNumber: String(d?.blockNumber ?? ''),
-                        timestamp: String(d?.timestamp ?? ''),
-                        merchantId: String(d?.merchantId ?? ''),
-                        terminalId: String(d?.terminalId ?? ''),
-                        referenceNumber: String(d?.referenceNumber ?? ''),
-                        transactionAmount: String(d?.transactionAmount ?? ''),
-                        totalPay: String((Number(d?.transactionAmount ?? 0) + Number(d?.gasCost ?? 0))),
-                      } as any;
-                      setTxn(mapped);
+                      // 判断是否是多链支付：检查返回数据中是否有 orderInfos 数组
+                      const orderInfos = d?.orderInfos;
+                      const hasOrderInfosValue = Array.isArray(orderInfos) && orderInfos.length > 0;
+                      const orderInfosLengthValue = Array.isArray(orderInfos) ? orderInfos.length : 0;
+                      
+                      // 保存到状态中，供支付成功界面使用
+                      setHasOrderInfos(hasOrderInfosValue);
+                      setOrderInfosLength(orderInfosLengthValue);
+                      
+                      console.log('Payment result check:', {
+                        hasOrderInfos: hasOrderInfosValue,
+                        orderInfosLength: orderInfosLengthValue,
+                        orderInfos,
+                      });
+                      
+                      if (hasOrderInfosValue) {
+                        // 多链支付返回：data.orderInfos 是数组
+                        setIsMultiChainPayment(true);
+                        const mappedList = orderInfos.map((item: any) => {
+                          // 从 tokenTransfers 中获取币种和金额信息
+                          const tokenTransfer = Array.isArray(item?.tokenTransfers) && item.tokenTransfers.length > 0 
+                            ? item.tokenTransfers[0] 
+                            : null;
+                          // 根据 primaryAccountNumber 查找对应的链类型
+                          const card = cards.find((c) => String((c as any).cardToken) === String(item?.primaryAccountNumber ?? ''));
+                          const chainType = card ? resolveChainType(card) : 'ETHEREUM';
+                          return {
+                            txHash: String(item?.txHash ?? ''),
+                            status: String(item?.status ?? ''),
+                            blockNumber: String(item?.blockNumber ?? ''),
+                            timestamp: String(item?.timestamp ?? ''),
+                            chainType: chainType,
+                            primaryAccountNumber: String(item?.primaryAccountNumber ?? ''),
+                            amount: String(tokenTransfer?.amount ?? item?.transactionAmount ?? '0'),
+                            tokenSymbol: String(tokenTransfer?.tokenSymbol ?? selectingTokenSymbol ?? ''),
+                            gasCost: String(item?.gasCost ?? '0'),
+                            fromAddress: String(item?.fromAddress ?? ''),
+                            toAddress: String(item?.toAddress ?? ''),
+                            merchantId: String(item?.merchantId ?? factor?.merchantId ?? ''),
+                            terminalId: String(item?.terminalId ?? factor?.terminalId ?? ''),
+                            referenceNumber: String(item?.referenceNumber ?? factor?.referenceNumber ?? ''),
+                            transactionAmount: String(item?.transactionAmount ?? ''),
+                          };
+                        });
+                        console.log('Multi-chain payment mapped list:', mappedList);
+                        setMultiChainTxns(mappedList);
+                        // 设置第一个交易作为主要交易信息（用于显示基本信息）
+                        if (mappedList.length > 0) {
+                          setTxn({
+                            ...mappedList[0],
+                            merchantId: String(factor?.merchantId ?? ''),
+                            terminalId: String(factor?.terminalId ?? ''),
+                            referenceNumber: String(factor?.referenceNumber ?? ''),
+                            transactionAmount: String(transactionAmount),
+                          });
+                        }
+                        console.log('Set isMultiChainPayment to true, multiChainTxns count:', mappedList.length);
+                      } else {
+                        // 单链支付
+                        setIsMultiChainPayment(false);
+                        setMultiChainTxns([]);
+                        setHasOrderInfos(false);
+                        setOrderInfosLength(0);
+                        const mapped = {
+                          txHash: String(d?.txHash ?? ''),
+                          status: String(d?.status ?? ''),
+                          blockNumber: String(d?.blockNumber ?? ''),
+                          timestamp: String(d?.timestamp ?? ''),
+                          merchantId: String(d?.merchantId ?? ''),
+                          terminalId: String(d?.terminalId ?? ''),
+                          referenceNumber: String(d?.referenceNumber ?? ''),
+                          transactionAmount: String(d?.transactionAmount ?? ''),
+                          totalPay: String((Number(d?.transactionAmount ?? 0) + Number(d?.gasCost ?? 0))),
+                        } as any;
+                        setTxn(mapped);
+                      }
                       setPayStatus('success');
                     } else {
                       setPayStatus('timeout');
@@ -1278,48 +1701,141 @@ const fetchTransFactor = useCallback(async () => {
         </View>
       )}
       {payStatus === 'success' && (
-        <View style={styles.fullScreenMask}>
+        <View style={[styles.fullScreenMask, { justifyContent: 'flex-start', paddingTop: 40 }]}>
           <Text style={styles.successTitle}>支付成功</Text>
 
-          <View style={{ marginTop: 24, alignSelf: 'stretch' }}>
-            <View style={styles.sectionRow}>
-              <Text style={styles.sectionTitle}>商品价格</Text>
-              <Text style={styles.sectionValue}>{productPrice ? `$${productPrice}` : ''}</Text>
+          <ScrollView style={{ flex: 1, alignSelf: 'stretch', marginTop: 24, maxHeight: '70%' }} showsVerticalScrollIndicator>
+            {/* 基本信息 */}
+            <View style={{ alignSelf: 'stretch' }}>
+              <View style={styles.sectionRow}>
+                <Text style={styles.sectionTitle}>商品价格</Text>
+                <Text style={styles.sectionValue}>{productPrice ? `$${productPrice}` : ''}</Text>
+              </View>
+
+              <View style={styles.sectionRow}>
+                <Text style={styles.sectionTitle}>Gas费</Text>
+                <Text style={styles.sectionValue}>{gasFee ? `$${gasFee}` : ''}</Text>
+              </View>
+
+              <View style={styles.sectionRow}>
+                <Text style={styles.sectionTitle}>实际支付</Text>
+                <Text style={styles.sectionValue}>
+                  {totalPay ? `$${totalPay}` : ''}
+                </Text>
+              </View>
             </View>
 
-            <View style={styles.sectionRow}>
-              <Text style={styles.sectionTitle}>Gas费</Text>
-              <Text style={styles.sectionValue}>{gasFee ? `$${gasFee}` : ''}</Text>
-            </View>
-
-            <View style={styles.sectionRow}>
-              <Text style={styles.sectionTitle}>实际支付</Text>
-              <Text style={[styles.sectionValue]}>
-                {totalPay ? `$${totalPay}` : ''}
-              </Text>
-            </View>
-            <View style={styles.sectionRow}>
-              <Text style={styles.sectionTitle}>网络类型</Text>
-              <Text style={styles.sectionValue}>以太坊</Text>
-            </View>
-            <View style={styles.sectionRow}>
-              <Text style={styles.sectionTitle}>链上交易哈希</Text>
-              <Text style={styles.sectionValue}>{txn?.txHash ?? '-'}</Text>
-            </View>
-            <View style={styles.sectionRow}>
-              <Text style={styles.sectionTitle}>区块号</Text>
-              <Text style={styles.sectionValue}>{txn?.blockNumber ?? '-'}</Text>
-            </View>
-            <View style={styles.sectionRow}>
-              <Text style={styles.sectionTitle}>区块时间戳</Text>
-              <Text style={styles.sectionValue}>{formatTimestamp(txn?.timestamp)}</Text>
-            </View>
-          </View>
+      
+            {hasOrderInfos && orderInfosLength > 0 ? (
+              <View style={{ marginTop: 20, alignSelf: 'stretch' }}>
+                <Text style={[styles.sectionTitle, { marginBottom: 12, fontSize: 16, fontWeight: '700' }]}>
+                  多链支付详情
+                </Text>
+                {multiChainTxns.map((chainTxn, index) => {
+                  const card = cards.find((c) => String((c as any).cardToken) === String(chainTxn.primaryAccountNumber));
+                  const chainName = card ? String(card?.chainName ?? '') : String(chainTxn.chainType ?? '');
+                  return (
+                    <View key={index} style={[styles.multiChainItem, { marginBottom: 16 }]}>
+                      <View style={styles.multiChainItemHeader}>
+                        <Text style={styles.multiChainItemTitle}>
+                          交易 {index + 1} - {chainName}
+                        </Text>
+                      </View>
+                      <View style={styles.sectionRow}>
+                        <Text style={styles.sectionTitle}>账户</Text>
+                        <Text style={styles.sectionValue}>
+                          {maskCardToken(String(chainTxn.primaryAccountNumber ?? ''))}
+                        </Text>
+                      </View>
+                      <View style={styles.sectionRow}>
+                        <Text style={styles.sectionTitle}>币种</Text>
+                        <Text style={styles.sectionValue}>{chainTxn.tokenSymbol ?? '-'}</Text>
+                      </View>
+                      <View style={styles.sectionRow}>
+                        <Text style={styles.sectionTitle}>金额</Text>
+                        <Text style={styles.sectionValue}>
+                          {chainTxn.amount ? `${chainTxn.amount} ${chainTxn.tokenSymbol ?? ''}` : '-'}
+                        </Text>
+                      </View>
+                      <View style={styles.sectionRow}>
+                        <Text style={styles.sectionTitle}>交易哈希</Text>
+                        <Text style={[styles.sectionValue, { fontSize: 11 }]}>
+                          {chainTxn.txHash || '-'}
+                        </Text>
+                      </View>
+                      <View style={styles.sectionRow}>
+                        <Text style={styles.sectionTitle}>区块号</Text>
+                        <Text style={styles.sectionValue}>{chainTxn.blockNumber ?? '-'}</Text>
+                      </View>
+                      <View style={styles.sectionRow}>
+                        <Text style={styles.sectionTitle}>区块时间</Text>
+                        <Text style={styles.sectionValue}>{formatTimestamp(chainTxn.timestamp)}</Text>
+                      </View>
+                      {chainTxn.fromAddress && (
+                        <View style={styles.sectionRow}>
+                          <Text style={styles.sectionTitle}>发送地址</Text>
+                          <Text style={[styles.sectionValue, { fontSize: 11 }]}>
+                            {String(chainTxn.fromAddress).slice(0, 10)}...{String(chainTxn.fromAddress).slice(-8)}
+                          </Text>
+                        </View>
+                      )}
+                      {chainTxn.toAddress && (
+                        <View style={styles.sectionRow}>
+                          <Text style={styles.sectionTitle}>接收地址</Text>
+                          <Text style={[styles.sectionValue, { fontSize: 11 }]}>
+                            {String(chainTxn.toAddress).slice(0, 10)}...{String(chainTxn.toAddress).slice(-8)}
+                          </Text>
+                        </View>
+                      )}
+                      {chainTxn.gasCost && Number(chainTxn.gasCost) > 0 && (
+                        <View style={styles.sectionRow}>
+                          <Text style={styles.sectionTitle}>Gas费</Text>
+                          <Text style={styles.sectionValue}>
+                            {Number(chainTxn.gasCost).toFixed(6)} {chainTxn.tokenSymbol ?? ''}
+                          </Text>
+                        </View>
+                      )}
+                      <View style={styles.sectionRow}>
+                        <Text style={styles.sectionTitle}>交易状态</Text>
+                        <Text style={[styles.sectionValue, { color: chainTxn.status === 'success' ? '#2e7d32' : '#e53935' }]}>
+                          {chainTxn.status === 'success' ? '成功' : chainTxn.status}
+                        </Text>
+                      </View>
+                    </View>
+                  );
+                })}
+              </View>
+            ) : (
+              /* 单链支付结果 */
+              <View style={{ marginTop: 20, alignSelf: 'stretch' }}>
+                <View style={styles.sectionRow}>
+                  <Text style={styles.sectionTitle}>网络类型</Text>
+                  <Text style={styles.sectionValue}>以太坊</Text>
+                </View>
+                <View style={styles.sectionRow}>
+                  <Text style={styles.sectionTitle}>链上交易哈希</Text>
+                  <Text style={styles.sectionValue}>{txn?.txHash ?? '-'}</Text>
+                </View>
+                <View style={styles.sectionRow}>
+                  <Text style={styles.sectionTitle}>区块号</Text>
+                  <Text style={styles.sectionValue}>{txn?.blockNumber ?? '-'}</Text>
+                </View>
+                <View style={styles.sectionRow}>
+                  <Text style={styles.sectionTitle}>区块时间戳</Text>
+                  <Text style={styles.sectionValue}>{formatTimestamp(txn?.timestamp)}</Text>
+                </View>
+              </View>
+            )}
+          </ScrollView>
 
           <TouchableOpacity
-            style={[styles.payBtn, { marginTop: 30, alignSelf: 'stretch' }]}
+            style={[styles.payBtn, { marginTop: 20, alignSelf: 'stretch' }]}
             onPress={() => {
               setPayStatus('idle');
+              setIsMultiChainPayment(false);
+              setMultiChainTxns([]);
+              setHasOrderInfos(false);
+              setOrderInfosLength(0);
               navigation.popToTop();
             }}
           >
@@ -1789,6 +2305,255 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: '#222',
     fontWeight: '600',
+  },
+  insufficientBalanceBox: {
+    marginTop: 12,
+    backgroundColor: '#FFF9E6',
+    borderRadius: 8,
+    padding: 12,
+    borderWidth: 1,
+    borderColor: '#FFE58F',
+  },
+  insufficientBalanceContent: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+  },
+  insufficientBalanceIcon: {
+    fontSize: 20,
+    color: '#FF9800',
+    marginRight: 8,
+    marginTop: 2,
+  },
+  insufficientBalanceText: {
+    flex: 1,
+  },
+  insufficientBalanceTitle: {
+    fontSize: 14,
+    color: '#222',
+    fontWeight: '600',
+    marginBottom: 4,
+  },
+  insufficientBalanceDesc: {
+    fontSize: 13,
+    color: '#666',
+    marginBottom: 8,
+    lineHeight: 18,
+  },
+  addAccountLink: {
+    alignSelf: 'flex-start',
+  },
+  addAccountLinkText: {
+    fontSize: 13,
+    color: '#1890FF',
+    fontWeight: '500',
+  },
+  // 支付账户选择模态框样式
+  paymentModalHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 16,
+  },
+  paymentModalTitle: {
+    fontSize: 18,
+    fontWeight: '600',
+    color: '#222',
+  },
+  paymentMethodTabs: {
+    flexDirection: 'row',
+    marginBottom: 20,
+    borderBottomWidth: 1,
+    borderBottomColor: '#f1f1f1',
+  },
+  paymentMethodTab: {
+    flex: 1,
+    paddingBottom: 12,
+    alignItems: 'center',
+    position: 'relative',
+  },
+  paymentMethodTabActive: {
+    // 激活状态样式
+  },
+  paymentMethodTabText: {
+    fontSize: 15,
+    color: '#999',
+    fontWeight: '500',
+  },
+  paymentMethodTabTextActive: {
+    color: '#1890FF',
+    fontWeight: '600',
+  },
+  paymentMethodTabUnderline: {
+    position: 'absolute',
+    bottom: 0,
+    left: 0,
+    right: 0,
+    height: 2,
+    backgroundColor: '#1890FF',
+  },
+  currencySelectionSection: {
+    marginBottom: 24,
+  },
+  currencySelectionLabel: {
+    fontSize: 14,
+    color: '#222',
+    fontWeight: '600',
+    marginBottom: 12,
+  },
+  currencyButtons: {
+    flexDirection: 'row',
+    gap: 12,
+  },
+  currencyButton: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#E5E5E5',
+    backgroundColor: '#fff',
+  },
+  currencyButtonSelected: {
+    backgroundColor: '#E6F4FF',
+    borderColor: '#1890FF',
+  },
+  currencyIcon: {
+    width: 24,
+    height: 24,
+    borderRadius: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 8,
+  },
+  currencyIconUSDC: {
+    backgroundColor: '#1890FF',
+  },
+  currencyIconUSDT: {
+    backgroundColor: '#26A17B',
+  },
+  currencyIconText: {
+    color: '#fff',
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  currencyButtonText: {
+    fontSize: 14,
+    color: '#333',
+    fontWeight: '500',
+    flex: 1,
+  },
+  currencyButtonTextSelected: {
+    color: '#1890FF',
+    fontWeight: '600',
+  },
+  currencyCheckmark: {
+    fontSize: 16,
+    color: '#1890FF',
+    fontWeight: '700',
+  },
+  accountSelectionSection: {
+    marginBottom: 24,
+  },
+  accountSelectionLabel: {
+    fontSize: 14,
+    color: '#222',
+    fontWeight: '600',
+    marginBottom: 12,
+  },
+  accountItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#E5E5E5',
+    backgroundColor: '#fff',
+    marginBottom: 12,
+  },
+  accountItemSelected: {
+    backgroundColor: '#E6F4FF',
+    borderColor: '#1890FF',
+  },
+  accountIcon: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    marginRight: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  chainIconEthereum: {
+    backgroundColor: '#627EEA',
+  },
+  chainIconDiamond: {
+    transform: [{ rotate: '45deg' }],
+  },
+  chainIconArbitrum: {
+    backgroundColor: '#28A0F0',
+  },
+  chainIconPolygon: {
+    backgroundColor: '#8247E5',
+  },
+  chainIconDefault: {
+    backgroundColor: '#f0f0f0',
+  },
+  chainIconText: {
+    color: '#fff',
+    fontSize: 16,
+    fontWeight: '700',
+  },
+  chainIconDiamondText: {
+    transform: [{ rotate: '-45deg' }],
+  },
+  accountInfo: {
+    flex: 1,
+  },
+  accountTypeText: {
+    fontSize: 14,
+    color: '#333',
+    fontWeight: '500',
+    marginBottom: 4,
+  },
+  accountAddressText: {
+    fontSize: 12,
+    color: '#666',
+  },
+  accountArrow: {
+    fontSize: 20,
+    color: '#999',
+    marginLeft: 8,
+  },
+  bankCardSection: {
+    paddingVertical: 20,
+  },
+  bankCardIcon: {
+    backgroundColor: '#1890FF',
+  },
+  bankCardIconText: {
+    color: '#fff',
+    fontSize: 14,
+    fontWeight: '700',
+  },
+  multiChainItem: {
+    backgroundColor: '#f8f9fa',
+    borderRadius: 8,
+    padding: 12,
+    borderWidth: 1,
+    borderColor: '#e5e5e5',
+  },
+  multiChainItemHeader: {
+    marginBottom: 8,
+    paddingBottom: 8,
+    borderBottomWidth: 1,
+    borderBottomColor: '#e5e5e5',
+  },
+  multiChainItemTitle: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: '#222',
   },
 
 });
