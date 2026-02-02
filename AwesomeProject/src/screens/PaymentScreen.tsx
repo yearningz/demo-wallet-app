@@ -590,7 +590,7 @@ const PaymentScreen = ({ navigation, route }: PaymentScreenProps) => {
         merchantId: obj.merchantId ?? undefined,
         terminalId: obj.terminalId ?? undefined,
         referenceNumber: obj.referenceNumber ?? undefined,
-        transactionAmount: obj.transactionAmount != null ? Number(obj.transactionAmount) : undefined,
+        transactionAmount: obj.transactionAmount != null ? Number(obj.transactionAmount) : obj.amount != null ? Number(obj.amount) : undefined,
         transactionType: obj.transactionType ?? undefined,
       };
       console.log('Setting factor from scanText:', newFactor);
@@ -602,14 +602,14 @@ const PaymentScreen = ({ navigation, route }: PaymentScreenProps) => {
           merchantId: newFactor.merchantId ?? prev?.merchantId,
           terminalId: newFactor.terminalId ?? prev?.terminalId,
           referenceNumber: newFactor.referenceNumber ?? prev?.referenceNumber,
-          transactionAmount: newFactor.transactionAmount ?? prev?.transactionAmount,
+          transactionAmount: newFactor.transactionAmount ?? prev?.transactionAmount ?? prev?.amount,
           transactionType: newFactor.transactionType ?? prev?.transactionType,
         };
         console.log('Merged factor:', merged);
         return merged;
       });
       //1.4不从交易要素获取商品价格
-      const amt = obj.transactionAmount != null ? Number(obj.transactionAmount) : 0;
+      const amt = obj.transactionAmount != null ? Number(obj.transactionAmount) : obj.amount != null ? Number(obj.amount) : 0;
       setProductPrice(amt.toFixed(4) as unknown as number);
       // 预授权检查移至"确认付款"点击后执行
       // const total = (amt + Number(gasFee || 0)).toFixed(4);
@@ -1029,7 +1029,7 @@ const fetchTransFactor = useCallback(async () => {
                     merchantId: String(d?.merchantId ?? ''),
                     terminalId: String(d?.terminalId ?? ''),
                     referenceNumber: String(d?.referenceNumber ?? ''),
-                    transactionAmount: String(d?.transactionAmount ?? ''),
+                    transactionAmount: String(d?.transactionAmount ?? d?.amount??''),
                     statusCode: String(json?.statusCode ?? ''),
                     msg: String(json?.msg ?? ''),
                     totalPay: String((Number(d?.transactionAmount ?? 0) + Number(d?.gasCost ?? 0))),
