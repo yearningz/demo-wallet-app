@@ -145,14 +145,26 @@ const PaymentScreen = ({ navigation, route }: PaymentScreenProps) => {
     const accounts: Array<{ cardId: string; chainName: string; cardToken: string; tokenSymbol: string; amount: number }> = [];
     
     for (const id of ids) {
-      if (!(remaining > 0)) break;
       const card = cards.find((c) => String(c?.id) === String(id));
       if (!card) continue;
       const k = balanceKey(String(id), String(selectingTokenSymbol));
-      const bal = balanceByKey[k]?.value ?? 0;
+      const balanceInfo = balanceByKey[k];
+      const bal = balanceInfo?.value ?? 0;
+      const isLoading = balanceInfo?.loading ?? false;
       const available = Number.isFinite(bal) ? bal : 0;
-      const take = Math.max(0, Math.min(available, remaining));
-      if (take <= 0) continue;
+      
+      let take = 0;
+      if (remaining > 0) {
+        if (isLoading) {
+          // 余额正在加载，先显示剩余金额（会在余额加载完成后重新计算）
+          take = remaining;
+        } else if (available > 0) {
+          // 余额已加载，根据余额分配金额
+          take = Math.min(available, remaining);
+          remaining -= take;
+        }
+        // 如果余额为0，take保持为0，仍然显示账户但金额为0
+      }
       
       const chain = (card as any)?.raw?.chain ?? (card as any)?.chain ?? {};
       accounts.push({
@@ -162,7 +174,6 @@ const PaymentScreen = ({ navigation, route }: PaymentScreenProps) => {
         tokenSymbol: String(selectingTokenSymbol),
         amount: take,
       });
-      remaining -= take;
     }
 
     // 如果还有剩余金额，将剩余金额加到最后一个账户
@@ -872,23 +883,27 @@ const fetchTransFactor = useCallback(async () => {
                       // 判断是否是最后一个账户
                       const isLastAccount = index === paymentAccounts.length - 1;
                       
-                      // 计算前面账户已分配的金额总和
-                      const previousAmounts = paymentAccounts.slice(0, index).reduce((sum, acc) => sum + acc.amount, 0);
-                      const remainingAmount = orderAmount - previousAmounts;
+                      // 计算所有选中账户的累计余额
+                      const totalBalance = paymentAccounts.reduce((sum, acc) => {
+                        const key = balanceKey(acc.cardId, String(selectingTokenSymbol));
+                        const bal = balanceByKey[key]?.value ?? 0;
+                        return sum + (Number.isFinite(bal) ? bal : 0);
+                      }, 0);
                       
-                      // 如果账户余额 >= 分配的金额，展示分配的金额
-                      // 如果余额不足，最后一个账户展示剩余需要支付的费用
-                      let displayAmount = account.amount;
-                      
-                      // 如果是最后一个账户且余额不足（余额 < 剩余需要支付的费用），显示剩余需要支付的费用
-                      if (isLastAccount && accountBalanceValue < remainingAmount) {
-                        displayAmount = Math.max(0, remainingAmount);
+                      // 如果累计余额大于订单金额，最后一个账户显示：累计余额 - 订单金额
+                      let displayAmount = accountBalanceValue;
+                      if (isLastAccount && totalBalance > orderAmount) {
+                        const previousAmounts = paymentAccounts.slice(0, index).reduce((sum, acc) => {
+                          const key = balanceKey(acc.cardId, String(selectingTokenSymbol));
+                          const bal = balanceByKey[key]?.value ?? 0;
+                          return sum + (Number.isFinite(bal) ? bal : 0);
+                        }, 0);
+                        displayAmount = Math.max(0, orderAmount - previousAmounts);
                       }
-                      // 其他情况显示分配的金额（account.amount 已经根据余额计算，不会超过账户余额）
                       
                       const formatAmount = (n: number) => {
                         if (!Number.isFinite(n) || n < 0) return '0.00';
-                        return n.toFixed(4);
+                        return n.toFixed(2);
                       };
                       return (
                         <Text style={[styles.paymentAccountAmount]}>
@@ -1154,33 +1169,6 @@ const fetchTransFactor = useCallback(async () => {
                   <Text style={styles.currencySelectionLabel}>选择币种</Text>
                   <View style={styles.currencyButtons}>
                   <TouchableOpacity
-                      style={[styles.currencyButton, selectingCurrency === 'USDT' && styles.currencyButtonSelected]}
-                      onPress={() => {
-                        setSelectingCurrency('USDT');
-                        // 更新币种选择
-                        setSelectingTokenSymbol('USDT');
-                        // 如果已经选择了账户，需要重新获取余额
-                        if (selectedCardId || (Array.isArray(selectedPayCardIds) && selectedPayCardIds.length > 0)) {
-                          const ids = Array.isArray(selectedPayCardIds) && selectedPayCardIds.length > 0 
-                            ? selectedPayCardIds 
-                            : selectedCardId ? [selectedCardId] : [];
-                          ids.forEach((id) => {
-                            fetchBalance(String(id), 'USDT');
-                          });
-                        }
-                      }}
-                    >
-                      <View style={[styles.currencyIcon, styles.currencyIconUSDT]}>
-                        <Text style={styles.currencyIconText}>T</Text>
-                      </View>
-                      <Text style={[styles.currencyButtonText, selectingCurrency === 'USDT' && styles.currencyButtonTextSelected]}>
-                        USDT
-                      </Text>
-                      {selectingCurrency === 'USDT' && (
-                        <Text style={styles.currencyCheckmark}>✓</Text>
-                      )}
-                    </TouchableOpacity>
-                    <TouchableOpacity
                       style={[styles.currencyButton, selectingCurrency === 'USDC' && styles.currencyButtonSelected]}
                       onPress={() => {
                         setSelectingCurrency('USDC');
@@ -1207,6 +1195,34 @@ const fetchTransFactor = useCallback(async () => {
                         <Text style={styles.currencyCheckmark}>✓</Text>
                       )}
                     </TouchableOpacity>
+                  <TouchableOpacity
+                      style={[styles.currencyButton, selectingCurrency === 'USDT' && styles.currencyButtonSelected]}
+                      onPress={() => {
+                        setSelectingCurrency('USDT');
+                        // 更新币种选择
+                        setSelectingTokenSymbol('USDT');
+                        // 如果已经选择了账户，需要重新获取余额
+                        if (selectedCardId || (Array.isArray(selectedPayCardIds) && selectedPayCardIds.length > 0)) {
+                          const ids = Array.isArray(selectedPayCardIds) && selectedPayCardIds.length > 0 
+                            ? selectedPayCardIds 
+                            : selectedCardId ? [selectedCardId] : [];
+                          ids.forEach((id) => {
+                            fetchBalance(String(id), 'USDT');
+                          });
+                        }
+                      }}
+                    >
+                      <View style={[styles.currencyIcon, styles.currencyIconUSDT]}>
+                        <Text style={styles.currencyIconText}>T</Text>
+                      </View>
+                      <Text style={[styles.currencyButtonText, selectingCurrency === 'USDT' && styles.currencyButtonTextSelected]}>
+                        USDT
+                      </Text>
+                      {selectingCurrency === 'USDT' && (
+                        <Text style={styles.currencyCheckmark}>✓</Text>
+                      )}
+                    </TouchableOpacity>
+                 
                 
                   </View>
                 </View>
@@ -1362,6 +1378,11 @@ const fetchTransFactor = useCallback(async () => {
                 setUseMultiAccountPayment(Array.isArray(selectedPayCardIds) && selectedPayCardIds.length > 1);
                 if (selectingCurrency) {
                   setSelectingTokenSymbol(selectingCurrency);
+                  // 触发所有选中账户的余额获取
+                  const ids = Array.isArray(selectedPayCardIds) ? selectedPayCardIds : [];
+                  ids.forEach((id) => {
+                    fetchBalance(String(id), String(selectingCurrency));
+                  });
                 }
                 setSelectingCard(false);
                 setMultiSelectMode(false);
@@ -1600,25 +1621,13 @@ const fetchTransFactor = useCallback(async () => {
                       return fetchBalance(String(id), tokenSymbol);
                     };
 
-                    let singleCoverId = '';
-                    if (tokenSymbol && txAmountValue > 0) {
-                      for (const id of ids) {
-                        const v = await getBalanceValue(String(id));
-                        if (v >= txAmountValue) {
-                          singleCoverId = String(id);
-                          break;
-                        }
-                      }
-                    }
-
-                    const finalIds = singleCoverId ? [singleCoverId] : ids;
-                    if (singleCoverId) {
-                      setSelectedPayCardIds([singleCoverId]);
-                      setUseMultiAccountPayment(false);
-                    }
-
+                    // 如果用户选择了多个账户，直接使用多链接口
+                    const finalIds = ids;
                     const useMultiChain =
-                      !usePreAuth && useMultiAccountPayment && finalIds.length > 1 && !singleCoverId && !!tokenSymbol && txAmountValue > 0;
+                      !usePreAuth && 
+                      finalIds.length > 1 && 
+                      !!tokenSymbol && 
+                      txAmountValue > 0;
 
                     const primaryAccountNumber = resolvePrimaryAccountNumber(finalIds);
                     const url = usePreAuth
@@ -1821,7 +1830,7 @@ const fetchTransFactor = useCallback(async () => {
             {hasOrderInfos && orderInfosLength > 0 ? (
               <View style={{ marginTop: 20, alignSelf: 'stretch' }}>
                 <Text style={[styles.sectionTitle, { marginBottom: 12, fontSize: 16, fontWeight: '700' }]}>
-                  多链支付详情
+                  支付详情
                 </Text>
                 {multiChainTxns.map((chainTxn, index) => {
                   const card = cards.find((c) => String((c as any).cardToken) === String(chainTxn.primaryAccountNumber));
@@ -1879,14 +1888,14 @@ const fetchTransFactor = useCallback(async () => {
                           </Text>
                         </View>
                       )}
-                      {chainTxn.gasCost && Number(chainTxn.gasCost) > 0 && (
-                        <View style={styles.sectionRow}>
-                          <Text style={styles.sectionTitle}>Gas费</Text>
-                          <Text style={styles.sectionValue}>
-                            {Number(chainTxn.gasCost).toFixed(4)} {chainTxn.tokenSymbol ?? ''}
-                          </Text>
-                        </View>
-                      )}
+                      {/*{chainTxn.gasCost && Number(chainTxn.gasCost) > 0 && (*/}
+                      {/*  <View style={styles.sectionRow}>*/}
+                      {/*    <Text style={styles.sectionTitle}>Gas费</Text>*/}
+                      {/*    <Text style={styles.sectionValue}>*/}
+                      {/*      {Number(chainTxn.gasCost).toFixed(4)} {chainTxn.tokenSymbol ?? ''}*/}
+                      {/*    </Text>*/}
+                      {/*  </View>*/}
+                      {/*)}*/}
                       <View style={styles.sectionRow}>
                         <Text style={styles.sectionTitle}>交易状态</Text>
                         <Text style={[styles.sectionValue, { color: chainTxn.status === 'success' ? '#2e7d32' : '#e53935' }]}>
@@ -2032,8 +2041,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     paddingTop: 8,
     paddingBottom: 24,
-    height: '60%',
-    maxHeight: '60%',
+    minHeight: '60%',
   },
   handle: {
     alignSelf: 'center',
