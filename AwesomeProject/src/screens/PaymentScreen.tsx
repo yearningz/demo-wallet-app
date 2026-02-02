@@ -903,7 +903,7 @@ const fetchTransFactor = useCallback(async () => {
                       
                       const formatAmount = (n: number) => {
                         if (!Number.isFinite(n) || n < 0) return '0.00';
-                        return n.toFixed(2);
+                        return n.toFixed(4);
                       };
                       return (
                         <Text style={[styles.paymentAccountAmount]}>
@@ -940,7 +940,7 @@ const fetchTransFactor = useCallback(async () => {
                 const needed = orderAmount - totalBalance;
                 const formatAmount = (n: number) => {
                   if (!Number.isFinite(n) || n < 0) return '0.00';
-                  return n.toFixed(2);
+                  return n.toFixed(4);
                 };
                 return (
                   <View style={styles.insufficientBalanceBox}>
