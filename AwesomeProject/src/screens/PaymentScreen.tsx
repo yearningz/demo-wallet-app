@@ -57,6 +57,7 @@ const PaymentScreen = ({ navigation, route }: PaymentScreenProps) => {
   const [preAuthSheetVisible, setPreAuthSheetVisible] = useState(false);
   const [preAuthSuccessVisible, setPreAuthSuccessVisible] = useState(false);
   const passwordInputRef = useRef<any>(null);
+  const defaultSelectedRef = useRef<boolean>(false);
   const [lockSheets, setLockSheets] = useState(false);
   const to = (route?.params as any)?.to as string | undefined;
   const scanText = (route?.params as any)?.scanText as string | undefined;
@@ -276,7 +277,7 @@ const PaymentScreen = ({ navigation, route }: PaymentScreenProps) => {
       if (!targetAmount || !(targetAmount > 0)) return [];
 
       const formatAmount = (n: number) => {
-        const s = Number.isFinite(n) ? n.toFixed(6) : '0.000000';
+        const s = Number.isFinite(n) ? n.toFixed(4) : '0.000000';
         return s.replace(/\.?0+$/, '');
       };
 
@@ -472,8 +473,55 @@ const PaymentScreen = ({ navigation, route }: PaymentScreenProps) => {
       if (selectingTokenSymbol && !selectingCurrency) {
         setSelectingCurrency(selectingTokenSymbol);
       }
+      // 如果是多选模式且没有选中任何账户，默认选中第一行
+      if (multiSelectMode && selectingCurrency) {
+        setSelectedPayCardIds((prev) => {
+          if (Array.isArray(prev) && prev.length > 0) {
+            return prev; // 如果已经有选中的，保持原样
+          }
+          // 如果没有选中的，等待 cards 加载完成后设置默认选中
+          return prev;
+        });
+      }
     }
-  }, [selectingCard, fetchAccountCardList, selectingTokenSymbol, selectingCurrency]);
+  }, [selectingCard, fetchAccountCardList, selectingTokenSymbol, selectingCurrency, multiSelectMode]);
+
+  // 当 cards 加载完成且是多选模式时，如果 selectedPayCardIds 为空，默认选中第一行
+  useEffect(() => {
+    if (selectingCard && multiSelectMode && selectingCurrency && cards.length > 0) {
+      setSelectedPayCardIds((prev) => {
+        if (Array.isArray(prev) && prev.length > 0) {
+          defaultSelectedRef.current = true; // 已经有选中的，标记为已设置
+          return prev; // 如果已经有选中的，保持原样
+        }
+        // 如果已经设置过默认选中，不再重复设置
+        if (defaultSelectedRef.current) {
+          return prev;
+        }
+        // 默认选中第一行
+        const firstCard = cards[0];
+        const firstId = String((firstCard as any)?.id ?? '');
+        if (firstId) {
+          // 检查第一行是否支持当前币种
+          const chain = (firstCard as any)?.raw?.chain ?? (firstCard as any)?.chain ?? {};
+          const tokens = Array.isArray(chain?.tokens) ? chain.tokens.map((t: any) => String(t)) : 
+                         Array.isArray((firstCard as any).tokens) ? (firstCard as any).tokens : [];
+          if (tokens.includes(selectingCurrency)) {
+            defaultSelectedRef.current = true; // 标记为已设置
+            setSelectedCardId(firstId);
+            // 获取第一行的余额
+            fetchBalance(firstId, String(selectingCurrency));
+            return [firstId];
+          }
+        }
+        return prev;
+      });
+    }
+    // 当关闭选择界面时，重置标记
+    if (!selectingCard) {
+      defaultSelectedRef.current = false;
+    }
+  }, [selectingCard, multiSelectMode, selectingCurrency, cards, fetchBalance]);
 
   useEffect(() => {
     // 当切换到银行卡标签且银行卡列表为空时，自动查询
@@ -589,7 +637,9 @@ const fetchTransFactor = useCallback(async () => {
     try {
       setFactorLoading(true);
       setFactorError('');
-      const res = await fetch('http://172.20.10.14:4523/m1/7468733-7203316-defaul/api/v1/posTransaction/queryTransFactor?primaryAccountNumber=625807******4153', {
+      const primaryAccountNumber = resolvePrimaryAccountNumber();
+      const url = `http://172.20.10.14:4523/m1/7468733-7203316-defaul/api/v1/posTransaction/queryTransFactor?primaryAccountNumber=${encodeURIComponent(primaryAccountNumber)}`;
+      const res = await fetch(url, {
         method: 'GET',
         headers: { 'Content-Type': 'application/json' },
       });
@@ -683,11 +733,7 @@ const fetchTransFactor = useCallback(async () => {
           </View>
 
           {(factorLoading || cardsLoading) && <Text style={styles.sectionDesc}>正在查询...</Text>}
-          {(!!factorError || !!cardsError || !!preAuthError) && (
-            <Text style={styles.sectionDesc}>
-              错误：{factorError || cardsError || preAuthError}
-            </Text>
-          )}
+          
 
           {/* <View style={styles.amountBlock}>
           <Text style={styles.currency}>$</Text>
@@ -801,7 +847,7 @@ const fetchTransFactor = useCallback(async () => {
               </TouchableOpacity>
               {paymentAccounts.map((account, index) => {
                 const formatAmount = (n: number) => {
-                  const s = Number.isFinite(n) ? n.toFixed(6) : '0.000000';
+                  const s = Number.isFinite(n) ? n.toFixed(4) : '0.000000';
                   return s.replace(/\.?0+$/, '');
                 };
                 return (
@@ -814,22 +860,57 @@ const fetchTransFactor = useCallback(async () => {
                         </Text>
                       </View>
                     </View>
-                    <Text style={styles.paymentAccountAmount}>
+                    {/* <Text style={styles.paymentAccountAmount}>
                       {formatAmount(account.amount)} {account.tokenSymbol}
-                    </Text>
+                    </Text> */}
+                    {(() => {
+                      // 获取当前账户的余额
+                      const k = balanceKey(account.cardId, String(selectingTokenSymbol));
+                      const accountBalance = balanceByKey[k]?.value ?? 0;
+                      const accountBalanceValue = Number.isFinite(accountBalance) ? accountBalance : 0;
+                      
+                      // 判断是否是最后一个账户
+                      const isLastAccount = index === paymentAccounts.length - 1;
+                      
+                      // 计算前面账户已分配的金额总和
+                      const previousAmounts = paymentAccounts.slice(0, index).reduce((sum, acc) => sum + acc.amount, 0);
+                      const remainingAmount = orderAmount - previousAmounts;
+                      
+                      // 如果账户余额 >= 分配的金额，展示分配的金额
+                      // 如果余额不足，最后一个账户展示剩余需要支付的费用
+                      let displayAmount = account.amount;
+                      
+                      // 如果是最后一个账户且余额不足（余额 < 剩余需要支付的费用），显示剩余需要支付的费用
+                      if (isLastAccount && accountBalanceValue < remainingAmount) {
+                        displayAmount = Math.max(0, remainingAmount);
+                      }
+                      // 其他情况显示分配的金额（account.amount 已经根据余额计算，不会超过账户余额）
+                      
+                      const formatAmount = (n: number) => {
+                        if (!Number.isFinite(n) || n < 0) return '0.00';
+                        return n.toFixed(4);
+                      };
+                      return (
+                        <Text style={[styles.paymentAccountAmount]}>
+                         {formatAmount(displayAmount)} {account.tokenSymbol}
+                        </Text>
+                      );
+                    })()}
                   </View>
                 );
               })}
               {paymentAccounts.length > 1 && (
                 <View style={styles.paymentAccountTotal}>
                   <Text style={styles.paymentAccountTotalLabel}>合计</Text>
-                  <Text style={styles.paymentAccountTotalAmount}>
-                    {(() => {
-                      const total = paymentAccounts.reduce((sum, acc) => sum + acc.amount, 0);
-                      const s = Number.isFinite(total) ? total.toFixed(6) : '0.000000';
-                      return s.replace(/\.?0+$/, '');
-                    })()} {selectingTokenSymbol}
-                  </Text>
+                  <View style={{ alignItems: 'flex-end' }}>
+                      <Text style={styles.paymentAccountTotalAmount}>
+                      {(() => {
+                        const total = paymentAccounts.reduce((sum, acc) => sum + acc.amount, 0);
+                        const s = Number.isFinite(total) ? total.toFixed(4) : '0.000000';
+                        return s.replace(/\.?0+$/, '');
+                      })()} {selectingTokenSymbol}
+                    </Text>
+                  </View>
                 </View>
               )}
               {balanceInsufficientHint && (() => {
@@ -920,7 +1001,7 @@ const fetchTransFactor = useCallback(async () => {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
-                      primaryAccountNumber: '6258071001604153',
+                      primaryAccountNumber: resolvePrimaryAccountNumber(),
                       transactionAmount: String(factor?.transactionAmount ?? amount ?? ''),
                       terminalId: String(factor?.terminalId ?? ''),
                       merchantId: String(factor?.merchantId ?? ''),
@@ -1072,6 +1153,33 @@ const fetchTransFactor = useCallback(async () => {
                 <View style={styles.currencySelectionSection}>
                   <Text style={styles.currencySelectionLabel}>选择币种</Text>
                   <View style={styles.currencyButtons}>
+                  <TouchableOpacity
+                      style={[styles.currencyButton, selectingCurrency === 'USDT' && styles.currencyButtonSelected]}
+                      onPress={() => {
+                        setSelectingCurrency('USDT');
+                        // 更新币种选择
+                        setSelectingTokenSymbol('USDT');
+                        // 如果已经选择了账户，需要重新获取余额
+                        if (selectedCardId || (Array.isArray(selectedPayCardIds) && selectedPayCardIds.length > 0)) {
+                          const ids = Array.isArray(selectedPayCardIds) && selectedPayCardIds.length > 0 
+                            ? selectedPayCardIds 
+                            : selectedCardId ? [selectedCardId] : [];
+                          ids.forEach((id) => {
+                            fetchBalance(String(id), 'USDT');
+                          });
+                        }
+                      }}
+                    >
+                      <View style={[styles.currencyIcon, styles.currencyIconUSDT]}>
+                        <Text style={styles.currencyIconText}>T</Text>
+                      </View>
+                      <Text style={[styles.currencyButtonText, selectingCurrency === 'USDT' && styles.currencyButtonTextSelected]}>
+                        USDT
+                      </Text>
+                      {selectingCurrency === 'USDT' && (
+                        <Text style={styles.currencyCheckmark}>✓</Text>
+                      )}
+                    </TouchableOpacity>
                     <TouchableOpacity
                       style={[styles.currencyButton, selectingCurrency === 'USDC' && styles.currencyButtonSelected]}
                       onPress={() => {
@@ -1099,33 +1207,7 @@ const fetchTransFactor = useCallback(async () => {
                         <Text style={styles.currencyCheckmark}>✓</Text>
                       )}
                     </TouchableOpacity>
-                    <TouchableOpacity
-                      style={[styles.currencyButton, selectingCurrency === 'USDT' && styles.currencyButtonSelected]}
-                      onPress={() => {
-                        setSelectingCurrency('USDT');
-                        // 更新币种选择
-                        setSelectingTokenSymbol('USDT');
-                        // 如果已经选择了账户，需要重新获取余额
-                        if (selectedCardId || (Array.isArray(selectedPayCardIds) && selectedPayCardIds.length > 0)) {
-                          const ids = Array.isArray(selectedPayCardIds) && selectedPayCardIds.length > 0 
-                            ? selectedPayCardIds 
-                            : selectedCardId ? [selectedCardId] : [];
-                          ids.forEach((id) => {
-                            fetchBalance(String(id), 'USDT');
-                          });
-                        }
-                      }}
-                    >
-                      <View style={[styles.currencyIcon, styles.currencyIconUSDT]}>
-                        <Text style={styles.currencyIconText}>T</Text>
-                      </View>
-                      <Text style={[styles.currencyButtonText, selectingCurrency === 'USDT' && styles.currencyButtonTextSelected]}>
-                        USDT
-                      </Text>
-                      {selectingCurrency === 'USDT' && (
-                        <Text style={styles.currencyCheckmark}>✓</Text>
-                      )}
-                    </TouchableOpacity>
+                
                   </View>
                 </View>
 
@@ -1137,9 +1219,14 @@ const fetchTransFactor = useCallback(async () => {
                     const tokens = Array.isArray(chain?.tokens) ? chain.tokens.map((t: any) => String(t)) : 
                                    Array.isArray((c as any).tokens) ? (c as any).tokens : [];
                     return tokens.includes(selectingCurrency);
-                  }) : cards).map((c) => {
+                  }) : cards).map((c, index) => {
                     const id = String((c as any).id);
-                    const isSelected = selectedCardId === id || (Array.isArray(selectedPayCardIds) && selectedPayCardIds.includes(id));
+                    // 在多选模式下，只使用 selectedPayCardIds 来判断是否选中，不使用 selectedCardId
+                    const isInSelectedPayCardIds = Array.isArray(selectedPayCardIds) && selectedPayCardIds.includes(id);
+                    // 多选模式下只使用 selectedPayCardIds，非多选模式下使用 selectedCardId
+                    const isSelected = multiSelectMode && selectingCurrency 
+                      ? isInSelectedPayCardIds
+                      : (selectedCardId === id || isInSelectedPayCardIds);
                     const chain = (c as any)?.raw?.chain ?? (c as any)?.chain ?? {};
                     const chainName = String(c?.chainName ?? chain?.chainName ?? '');
                     
@@ -1171,9 +1258,14 @@ const fetchTransFactor = useCallback(async () => {
                               if (!has) {
                                 fetchBalance(id, String(selectingCurrency));
                               }
+                              // 更新 selectedCardId 为当前选中的第一个账户（如果有选中的话）
+                              if (next.length > 0) {
+                                setSelectedCardId(next[0]);
+                              } else {
+                                setSelectedCardId('');
+                              }
                               return next;
                             });
-                            setSelectedCardId((prev) => prev || id);
                           } else {
                             // 如果没有选择币种，提示用户先选择币种
                             if (!selectingCurrency) {
@@ -1791,7 +1883,7 @@ const fetchTransFactor = useCallback(async () => {
                         <View style={styles.sectionRow}>
                           <Text style={styles.sectionTitle}>Gas费</Text>
                           <Text style={styles.sectionValue}>
-                            {Number(chainTxn.gasCost).toFixed(6)} {chainTxn.tokenSymbol ?? ''}
+                            {Number(chainTxn.gasCost).toFixed(4)} {chainTxn.tokenSymbol ?? ''}
                           </Text>
                         </View>
                       )}
@@ -1940,7 +2032,8 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     paddingTop: 8,
     paddingBottom: 24,
-    minHeight: '55%',
+    height: '60%',
+    maxHeight: '60%',
   },
   handle: {
     alignSelf: 'center',
