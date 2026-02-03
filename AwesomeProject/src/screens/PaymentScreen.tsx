@@ -1006,57 +1006,57 @@ const fetchTransFactor = useCallback(async () => {
               // setSuccessVisible(true);
               // setTxnLoading(true);
               // setTxnError('');
-              (async () => {
-                let ac: AbortController | undefined;
-                let tid: any;
-                try {
-                  ac = new AbortController();
-                  tid = setTimeout(() => ac?.abort(), 30000);
-                  const res = await fetch('http://172.20.10.6:8088/api/v1/posTransaction/QRcodeConsumeActiveScan', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                      primaryAccountNumber: resolvePrimaryAccountNumber(),
-                      transactionAmount: String(factor?.transactionAmount ?? amount ?? ''),
-                      terminalId: String(factor?.terminalId ?? ''),
-                      merchantId: String(factor?.merchantId ?? ''),
-                      referenceNumber: String(factor?.referenceNumber ?? ''),
-                    }),
-                    signal: ac.signal,
-                  });
-                  const json = await res.json();
-                  console.warn('json', json);
-                  const d = json?.data ?? {};
-                  const mapped = {
-                    txHash: String(d?.txHash ?? ''),
-                    status: String(d?.status ?? ''),
-                    blockNumber: String(d?.blockNumber ?? ''),
-                    timestamp: String(d?.timestamp ?? ''),
-                    fromAddress: String(d?.fromAddress ?? ''),
-                    toAddress: String(d?.toAddress ?? ''),
-                    gasUsed: String(d?.gasUsed ?? ''),
-                    gasPrice: String(d?.gasPrice ?? ''),
-                    gasCost: String(d?.gasCost ?? ''),
-                    inputData: String(d?.inputData ?? ''),
-                    functionName: String(d?.functionName ?? ''),
-                    events: Array.isArray(d?.events) ? d.events : [],
-                    tokenTransfers: Array.isArray(d?.tokenTransfers) ? d.tokenTransfers : [],
-                    merchantId: String(d?.merchantId ?? ''),
-                    terminalId: String(d?.terminalId ?? ''),
-                    referenceNumber: String(d?.referenceNumber ?? ''),
-                    transactionAmount: String(d?.transactionAmount ?? d?.amount??''),
-                    statusCode: String(json?.statusCode ?? ''),
-                    msg: String(json?.msg ?? ''),
-                    totalPay: String((Number(d?.transactionAmount ?? 0) + Number(d?.gasCost ?? 0))),
-                  } as any;
-                  setTxn(mapped);
-                } catch (e: any) {
-                  // setTxnError(String(e?.message || e));
-                } finally {
-                  if (tid) clearTimeout(tid);
-                  // setTxnLoading(false);
-                }
-              })();
+              // (async () => {
+              //   let ac: AbortController | undefined;
+              //   let tid: any;
+              //   try {
+              //     ac = new AbortController();
+              //     tid = setTimeout(() => ac?.abort(), 30000);
+              //     // const res = await fetch('http://172.20.10.6:8088/api/v1/posTransaction/QRcodeConsumeActiveScan', {
+              //     //   method: 'POST',
+              //     //   headers: { 'Content-Type': 'application/json' },
+              //     //   body: JSON.stringify({
+              //     //     primaryAccountNumber: resolvePrimaryAccountNumber(),
+              //     //     transactionAmount: String(factor?.transactionAmount ?? amount ?? ''),
+              //     //     terminalId: String(factor?.terminalId ?? ''),
+              //     //     merchantId: String(factor?.merchantId ?? ''),
+              //     //     referenceNumber: String(factor?.referenceNumber ?? ''),
+              //     //   }),
+              //     //   signal: ac.signal,
+              //     // });
+              //     // const json = await res.json();
+              //     // console.warn('json', json);
+              //     // const d = json?.data ?? {};
+              //     // const mapped = {
+              //     //   txHash: String(d?.txHash ?? ''),
+              //     //   status: String(d?.status ?? ''),
+              //     //   blockNumber: String(d?.blockNumber ?? ''),
+              //     //   timestamp: String(d?.timestamp ?? ''),
+              //     //   fromAddress: String(d?.fromAddress ?? ''),
+              //     //   toAddress: String(d?.toAddress ?? ''),
+              //     //   gasUsed: String(d?.gasUsed ?? ''),
+              //     //   gasPrice: String(d?.gasPrice ?? ''),
+              //     //   gasCost: String(d?.gasCost ?? ''),
+              //     //   inputData: String(d?.inputData ?? ''),
+              //     //   functionName: String(d?.functionName ?? ''),
+              //     //   events: Array.isArray(d?.events) ? d.events : [],
+              //     //   tokenTransfers: Array.isArray(d?.tokenTransfers) ? d.tokenTransfers : [],
+              //     //   merchantId: String(d?.merchantId ?? ''),
+              //     //   terminalId: String(d?.terminalId ?? ''),
+              //     //   referenceNumber: String(d?.referenceNumber ?? ''),
+              //     //   transactionAmount: String(d?.transactionAmount ?? d?.amount??''),
+              //     //   statusCode: String(json?.statusCode ?? ''),
+              //     //   msg: String(json?.msg ?? ''),
+              //     //   totalPay: String((Number(d?.transactionAmount ?? 0) + Number(d?.gasCost ?? 0))),
+              //     // } as any;
+              //     // setTxn(mapped);
+              //   } catch (e: any) {
+              //     // setTxnError(String(e?.message || e));
+              //   } finally {
+              //     if (tid) clearTimeout(tid);
+              //     // setTxnLoading(false);
+              //   }
+              // })();
               const isPreAuth = String(factor?.transactionType) === '预授权';
               if (!isPreAuth) {
                 setShowPasswordScreen(true);
