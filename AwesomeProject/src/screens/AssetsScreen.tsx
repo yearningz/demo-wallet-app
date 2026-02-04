@@ -21,7 +21,7 @@ const AssetsScreen = ({}: Props) => {
   return (
     <SafeAreaView style={styles.container}>
       <WebView
-        source={{ uri: 'http://172.20.10.6:8088/app/cards/index.html' }}
+        source={{ uri: 'http://172.20.10.6:8088/app/cards/multi-chain/index.html' }}
         style={styles.webview}
         startInLoadingState
         renderError={() => (
